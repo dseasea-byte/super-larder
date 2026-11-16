@@ -1,12 +1,12 @@
 # Super Larder
 
-**An archive, not a memory.**
+**The point is saving tokens. An archive, not a memory.**
 
 A *larder* is where you keep what you've already paid for, so winter costs nothing.
 
 [中文](README.zh-CN.md) · English
 
-Turns your past conversations into a local, searchable archive — **without calling a single LLM, without a GPU, without uploading a byte.**
+Turns your past conversations into a local, searchable archive so the assistant stops re-reading raw transcripts — **without calling a single LLM, without a GPU, without uploading a byte. Zero tokens to build; 84–94% fewer tokens on every revisit.**
 
 ### Read once. Answer forever.
 
@@ -43,6 +43,8 @@ your client writes transcripts ──> build.py (pure CPU) ──> archive ─�
 ---
 
 ## Measured
+
+**What you actually save is tokens.** Building the archive costs zero; every revisit costs a fraction of re-reading the raw sessions.
 
 101 sessions / 15,459 messages / 627 MB of raw transcripts, on an ordinary desktop:
 

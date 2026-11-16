@@ -1,12 +1,12 @@
 # Super Larder · 温故
 
-**它是档案，不是记忆。**
+**核心是省 Token：它是档案，不是记忆。**
 
 larder 是英文里「把已经付过钱的东西存起来、冬天不必再买」的地方。
 
 [English](README.md) · 中文
 
-> 把历史对话在本地整理成可检索的知识库。**不调用任何大模型，不需要显卡，不上传一个字节。**
+> 把历史对话在本地压成一份可查档案，让 AI 下次不必重读原文。**不调用大模型、不需要显卡、不上传一个字节；建库 0 token，重复阅读省 84–94%。**
 
 **只读一次，之后随时可查。**
 
@@ -48,16 +48,26 @@ larder 是英文里「把已经付过钱的东西存起来、冬天不必再买�
 
 ## 实测数据
 
-在一台普通台式机上，99 个历史会话、15,459 条消息、627 MB 原始转录：
+在一台普通台式机上，101 个历史会话、15,459 条消息、627 MB 原始转录：
 
 | 指标 | 数值 |
 |---|---|
-| 冷启动建库 | **2.6 秒** |
-| 增量刷新 | **0.9 秒** |
-| 产出 | 22 个主题页 + 397 个关键词 |
-| 压缩比 | **75 : 1**（293 万 token → 3.9 万 token） |
+| 冷启动建库 | **2.9 秒** |
+| 增量刷新 | **0.8 秒** |
+| 产出 | 22 个主题页 / 39,946 tokens |
+| 压缩比 | **73 : 1**（293 万 → 4 万 tokens） |
 | 建库消耗 token | **0** |
-| 单次检索读取 | 约 1,780 token（一页） |
+| 单次检索 | **17 ms** |
+
+**核心价值是省 token。** 平均一页 1,815 tokens，用它替代重读原文：
+
+| 场景 | 不用 | 用 | 省 |
+|---|---|---|---|
+| 回顾一个主题（中位 2 个会话） | 11,390 | 1,815 | **84%** |
+| 回顾一个大会话 | 29,610 | 1,815 | **94%** |
+| 只读命中行 | 11,390 | 241 | **98%** |
+
+> 若按「读完全部语料」计算是 98.6%——没人会那么做。对外引用 84–94% 更稳妥。
 
 ---
 
@@ -146,7 +156,7 @@ read_hint: page         # page 读整页 / either 看命中段 / grep 别读整�
 
 实测分布（101 个会话）：12 页 `page`、8 页 `either`、2 页 `grep`。
 
-**小语料往往是反的**：9 个短会话时，读页 1,112 tokens，而直接读两个相关会话只要 486——越读越贵。
+**小语料往往是反的**：9 个短会话只生成 3 页，全部是 `grep`——读它们净亏。
 判断标准只有一条：**你的单次对话有多长**。三五轮就结束的对话，建库不划算。
 
 ## 它做不到什么
@@ -158,7 +168,7 @@ read_hint: page         # page 读整页 / either 看命中段 / grep 别读整�
 - **关键词检索，不是语义检索。** 同义表述可能漏（「命名规则」查不到「页名规范」）。
 - **主题名会漂移。** 每次全量重聚类，新会话可能让旧主题页合并或改名。
 - **只处理 WorkBuddy 的转录格式。** 其他客户端需要改 `parse_session()`。
-- **省 token 是有限的。** 稳态约 8%，单次回顾省 79%。想靠它把账单砍一半，做不到。
+- **省 token 是有限的。** 稳态约 8%，单次回顾省 84–94%。想靠它把账单砍一半，做不到。
 
 ---
 
@@ -194,7 +204,7 @@ python scripts/recall.py show <会话ID>
 
 Every new chat starts amnesiac. You re-explain the same context, re-derive the same plan, re-hit the same pitfalls. Online models are billed per token, so "just re-read the history" is expensive and often impossible.
 
-This tool pushes the mechanical work to your own CPU: cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, and building an inverted index. On a 99-session / 627 MB corpus it runs in **2.6 seconds and costs zero tokens**, compressing 2.9M tokens of raw dialogue into 39K tokens of searchable pages (75:1).
+This tool pushes the mechanical work to your own CPU: cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, and building an inverted index. On a 101-session / 627 MB corpus it runs in **2.9 seconds and costs zero tokens**, compressing 2.93M tokens of raw dialogue into 40K tokens of searchable pages (73:1). The point is saving tokens: **84–94% fewer tokens on every revisit**.
 
 Design rules: **no model dependency** (Python + jieba only, so anyone can install it), **extractive with provenance** (every conclusion carries a date and session id, never paraphrased), and **redaction before write** (passwords, keys and phone numbers are masked to `***`).
 

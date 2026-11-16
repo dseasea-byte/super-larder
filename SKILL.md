@@ -62,7 +62,7 @@ author: "董海洋（DHY.sea）"
 
 > 最后一行是理论上限，现实中无人通读全语料。对外只说 84–94%；98.6% 会被一句「谁会读全语料」问住。
 
-**小语料是反的**：9 个短会话时，读页 1,112 tokens，而直接读两个相关会话只要 486——越读越贵。所以每页自带 `read_hint`，见「判据」。
+**小语料是反的**：9 个短会话只生成 3 页，全部 `grep`——读它们净亏。所以每页自带 `read_hint`，见「判据」。
 
 ## English Overview
 
@@ -70,7 +70,7 @@ Super Larder turns conversation history into a local, searchable archive without
 
 Every new chat starts amnesiac: the same context gets re-explained, the same plan re-derived, the same pitfalls re-hit. Online models bill per token, so re-reading history is expensive and often impossible.
 
-This skill pushes the mechanical work to your own CPU — cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, building an inverted index. On a 101-session / 627 MB corpus it finishes in 2.9 seconds at zero token cost, compressing 2.9M tokens of dialogue into 40K tokens of pages (73:1).
+This skill pushes the mechanical work to your own CPU — cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, building an inverted index. On a 101-session / 627 MB corpus it finishes in 2.9 seconds at zero token cost, compressing 2.93M tokens of dialogue into 40K tokens of pages (73:1). The point is saving tokens: 84–94% fewer tokens on every revisit.
 
 **The knowledge base builds itself.** There is no separate curation step: point it at the transcripts your client already writes, and it grows on its own.
 
