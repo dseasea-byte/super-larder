@@ -1,0 +1,13 @@
+# 统一换行符，避免 Windows 克隆后 bash 脚本被写成 CRLF 而无法执行
+* text=auto
+
+*.cmd      text eol=crlf
+*.command  text eol=lf
+*.sh       text eol=lf
+*.py       text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf
+
+# 二进制
+*.zip      binary
+*.png      binary

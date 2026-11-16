@@ -1,0 +1,11 @@
+# 本地配置（含个人路径与业务词，不发布）
+config.json
+
+# 解析缓存与运行状态
+_系统/sessions.json
+*.tmp
+__pycache__/
+*.pyc
+
+# 若把知识库放在本目录下，一并忽略
+convo-kb/
