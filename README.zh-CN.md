@@ -12,6 +12,9 @@ larder 是英文里「把已经付过钱的东西存起来、冬天不必再买�
 
 [English](#english) · [工作原理](#工作原理) · [安装](#安装三步) · [局限](#它做不到什么)
 
+
+![Super Larder 工作原理](assets/showcase.jpg)
+
 ---
 
 ## 它解决什么问题

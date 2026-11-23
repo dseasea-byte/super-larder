@@ -10,6 +10,9 @@ Turns your past conversations into a local, searchable archive so the assistant 
 
 ### Read once. Answer forever.
 
+
+![Super Larder](assets/showcase.jpg)
+
 ---
 
 ## The problem
