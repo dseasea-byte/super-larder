@@ -1,7 +1,7 @@
 ---
 name: super-larder
 slug: super-larder
-version: 4.1.2
+version: 4.1.3
 displayName: Super Larder · 接续
 display_name_en: Super Larder
 description: 把历史对话在本地整理成可查档案，让 AI 下次不必重读原料。整理与检索全部由本机脚本完成，不调用任何模型、不耗一个 token；需要判断时只读一份十行审核报告。知识库从已有对话自动生成，不需单独录入或整理。当用户在新会话重提旧任务、要求「沿用上次/接着之前/查一下以前」、或需要回溯已定口径与踩坑记录时使用。纯闲聊、单点概念问答、明确要求从零重做时不触发。
