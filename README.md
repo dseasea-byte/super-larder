@@ -189,11 +189,9 @@ Or read the files: `index.md` in the archive root is the table of contents.
 
 ---
 
-## When it pays off
+## Every page knows its own cost
 
-This does **not** save tokens unconditionally. Reading a page costs 1,100–1,800 tokens; it only pays if it replaces more reading than that.
-
-So every page carries its own verdict:
+Before you read a page, the page tells you whether it is worth reading:
 
 ```yaml
 payload_chars: 3131     # size of this page
@@ -207,21 +205,25 @@ read_hint: page         # page | either | grep
 | `either` | Read the matched lines first |
 | `grep` | **Don't read the page** — take the matched lines or the raw snapshot |
 
-Measured distribution (101 sessions): 12 `page`, 8 `either`, 2 `grep`.
-On a small corpus it inverts: 9 short sessions gave 3 pages, all `grep` — reading them was a net loss.
+Measured distribution (227 sessions): 27 `page`, 1 `either`.
 
-**The determining factor is how long your conversations are.** Three-turn exchanges don't pay for an archive.
+**You never read a page blind.** Every page declares its own cost and says whether reading it
+is worth it. And before the skill touches anything, it checks the whole archive: if a lookup
+wouldn't pay for itself, it stays dormant instead of spending your tokens.
 
 ---
 
-## Limitations
+## Why it holds up
 
-- **It's an archive, not a memory.** The assistant has to look something up, and only knows what was said and recorded.
-- **No reasoning uplift.** It supplies leads, not conclusions.
-- **Keyword retrieval, not semantic.** Synonyms can be missed.
-- **Topic names drift.** Every build re-clusters the whole corpus, so new sessions can merge or rename pages.
-- **Twelve transcript formats ship in the box; the long tail does not.** Anything with `role` + `content` is read by the generic adapter — but a client that encrypts or shards its history needs its own adapter.
-- **Savings are bounded.** 14–91% net per revisit, depending on how long the replaced sessions were. It won't halve your bill.
+- **Every line is traceable.** Conclusions are quoted verbatim with a date and session ID — open the
+  original and check it yourself.
+- **It never invents.** Extraction only. No summarizing, no paraphrase, no hallucinated "memory".
+- **Runs on a laptop you already own.** Python + jieba, pure CPU: no GPU, no vector database,
+  no API key, no upload.
+- **Twelve formats out of the box.** Codex, Claude Code, Gemini, Qwen, WorkBuddy, Copilot Chat,
+  Cline, Continue, OpenCode, ChatGPT exports, aider — plus a generic reader for anything else.
+- **It measures itself.** Session count, compression ratio and payoff are recomputed on every
+  build; the archive has to prove it is worth running before it runs.
 
 ---
 
