@@ -36,10 +36,28 @@ if hasattr(sys.stdout, "reconfigure"):
         pass
 
 WB_HOME = Path(os.environ.get("WORKBUDDY_HOME") or (Path.home() / ".workbuddy"))
-PROJECTS = WB_HOME / "projects"
-CACHE_DIR = WB_HOME / "super-larder"
-INDEX_PATH = CACHE_DIR / "index.json"
-INDEX_VERSION = 5
+
+# Codex 版补丁：与 build.py 一致，支持 config.json / 环境变量指定数据源与缓存位置
+_SKILL_DIR = Path(__file__).resolve().parent.parent
+_CONFIG_PATH = Path(os.environ.get("CONVO_RECALL_CONFIG") or (_SKILL_DIR / "config.json"))
+
+
+def _load_config() -> dict:
+    try:
+        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8")) if _CONFIG_PATH.exists() else {}
+    except Exception:
+        return {}
+
+
+CONFIG = _load_config()
+PROJECTS = (Path(CONFIG["projects_root"]).expanduser() if CONFIG.get("projects_root")
+            else (WB_HOME / "projects"))
+CACHE_DIR = (Path(CONFIG["cache_dir"]).expanduser() if CONFIG.get("cache_dir")
+             else (Path(CONFIG["kb_root"]).expanduser() / "_系统" if CONFIG.get("kb_root")
+                   else WB_HOME / "super-larder"))
+INDEX_PATH = CACHE_DIR / "recall-index.json"
+GATE_PATH = CACHE_DIR / "gate.json"
+INDEX_VERSION = 6
 
 # 需从用户消息中剥离的注入块（这些不是用户真实诉求）
 NOISE_BLOCKS = [
@@ -228,33 +246,103 @@ def load_index() -> dict:
 
 
 def cmd_index(args) -> int:
-    if not PROJECTS.exists():
-        print(f"[!] 未找到会话目录：{PROJECTS}", file=sys.stderr)
+    """索引所有客户端来源。
+
+    v5 起不再假设「只有一个 jsonl 目录」：走 adapters 自动发现，
+    并顺带记录 raw 快照路径，`show` 时直接展开可读快照。
+    """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import adapters
+    from redactlib import collect_secrets, redact, secrets_clear
+
+    sources = adapters.discover(CONFIG.get("sources") or [],
+                                use_defaults=not CONFIG.get("sources_only"))
+    if not sources:
+        print("未发现任何客户端的转录目录。", file=sys.stderr)
+        print("已检查：" + "、".join(f"{a} {r}" for a, r in adapters.DEFAULT_ROOTS), file=sys.stderr)
         return 2
 
     idx = load_index()
     old = {} if getattr(args, "force", False) else idx["sessions"]
     new: dict[str, dict] = {}
     added = updated = kept = 0
+    scanned = 0
 
-    files = sorted(PROJECTS.glob("*/*.jsonl"))
-    for path in files:
-        try:
-            st = path.stat()
-        except OSError:
-            continue
-        prev = old.get(path.stem)
-        if prev and prev.get("mtime") == int(st.st_mtime) and prev.get("size") == st.st_size:
-            new[path.stem] = prev
-            kept += 1
-            continue
-        entry = parse_session(path)
-        if entry:
-            new[path.stem] = entry
-            if prev:
-                updated += 1
-            else:
-                added += 1
+    # 索引里同样不能留明文。先把全量文本过一遍收集口令值，再逐条脱敏写入。
+    secrets_clear()
+    for src in sources:
+        for path in src["files"]:
+            for raw in adapters.iter_sessions(path):
+                collect_secrets("\n".join(raw.get("prompts", [])))
+                collect_secrets("\n".join(raw.get("asst", [])))
+
+    raw_dir = CACHE_DIR.parent / "raw"
+
+    for src in sources:
+        for path in src["files"]:
+            for raw in adapters.iter_sessions(path):
+                scanned += 1
+                sid = raw["id"]
+                fp = [int(raw.get("end") or 0), int(raw.get("msgs") or 0)]
+                prev = old.get(sid)
+                if prev and prev.get("_fp") == fp:
+                    new[sid] = prev
+                    kept += 1
+                    continue
+
+                first_seen = sid not in new
+
+                # 长会话只取前 8 条会漏掉中段的决策，均匀采样最多 12 条
+                src_prompts = raw.get("prompts", [])
+                if len(src_prompts) <= 12:
+                    picked = src_prompts
+                else:
+                    step = (len(src_prompts) - 1) / 11
+                    picked = [src_prompts[round(i * step)] for i in range(12)]
+                prompts = [clip(redact(clean_user_text(x)), 600) for x in picked]
+                prompts = [x for x in prompts if x]
+
+                # 末条助手消息常常是工具输出，清洗后为空；往前找第一条有内容的
+                tail = ""
+                for a in reversed(raw.get("asst", [])):
+                    t = redact(clean_user_text(a))
+                    if t:
+                        tail = clip(t, 400)
+                        break
+
+                snapshot = raw_dir / time.strftime("%Y-%m", time.localtime(raw["end"])) / f"{sid}.md"
+
+                # 同一 id 多来源时留消息数更多的那份（rollout 通常比 SQLite 更全）
+                existing = new.get(sid)
+                if existing:
+                    if existing.get("msgs", 0) > raw.get("msgs", 0):
+                        # 留更全的那份，但补上客户端给的真实标题
+                        if raw.get("title_src") and not existing.get("title_src"):
+                            existing["title"] = raw["title"]
+                            existing["title_src"] = "agent"
+                        if not existing.get("cwd") and raw.get("cwd"):
+                            existing["cwd"] = raw["cwd"]
+                        continue
+
+                new[sid] = {
+                    "id": sid,
+                    "slug": src["agent"],
+                    "path": str(snapshot if snapshot.exists() else Path(raw["path"])),
+                    "title": redact(raw.get("title") or (prompts[0][:30] if prompts else "")),
+                    "title_src": raw.get("title_src") or "",
+                    "cwd": raw.get("cwd") or "",
+                    "start": round(raw["start"], 3),
+                    "end": round(raw["end"], 3),
+                    "msgs": raw.get("msgs", 0),
+                    "prompts": prompts,
+                    "tail": tail,
+                    "_fp": fp,
+                }
+                # 同一 id 可能来自多个来源（rollout + SQLite），只在第一次计入
+                if prev:
+                    updated += 1
+                elif first_seen:
+                    added += 1
 
     idx = {"version": INDEX_VERSION, "built": int(time.time()), "sessions": new}
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -264,8 +352,9 @@ def cmd_index(args) -> int:
 
     print(
         f"索引完成：共 {len(new)} 个会话"
-        f"（新增 {added}，更新 {updated}，复用 {kept}，扫描 {len(files)} 个文件）"
+        f"（新增 {added}，更新 {updated}，复用 {kept}，扫描 {scanned}）"
     )
+    print("来源：" + "、".join(f"{x['agent']}×{len(x['files'])}" for x in sources))
     print(f"缓存：{INDEX_PATH}")
     return 0
 
@@ -373,10 +462,22 @@ def score_entry(entry: dict, terms: list[str], full: bool) -> tuple[int, list[st
 
 
 def cmd_search(args) -> int:
+    if not gate_allows(args):
+        return 3
     idx = load_index()
     sessions = list(idx["sessions"].values())
     if not sessions:
-        print("[!] 索引为空，请先运行：recall.py index", file=sys.stderr)
+        # 第一次用：自动建一次索引，别让用户先学命令
+        print("（首次检索，正在建立索引…）", file=sys.stderr)
+        try:
+            cmd_index(argparse.Namespace(force=False))
+        except Exception as exc:
+            print(f"[!] 索引失败：{exc}", file=sys.stderr)
+            return 3
+        idx = load_index()
+        sessions = list(idx["sessions"].values())
+    if not sessions:
+        print("[!] 仍无可用会话，检查转录目录是否存在。", file=sys.stderr)
         return 3
 
     terms = [t for t in re.split(r"[\s,，、]+", (args.keywords or "").strip()) if t]
@@ -457,6 +558,8 @@ def cmd_search(args) -> int:
 # ---------------------------------------------------------------- 展开
 
 def cmd_show(args) -> int:
+    if not gate_allows(args):
+        return 3
     idx = load_index()
     entry = idx["sessions"].get(args.session_id)
     path = Path(entry["path"]) if entry else None
@@ -468,6 +571,11 @@ def cmd_show(args) -> int:
         else:
             print(f"[!] 找不到会话：{args.session_id}", file=sys.stderr)
             return 4
+
+    if path.suffix.lower() == ".md":
+        # raw 快照：已经清洗、已脱敏，直接展开即可
+        print(path.read_text(encoding="utf-8", errors="replace"))
+        return 0
 
     users: list[str] = []
     assistants: list[str] = []
@@ -505,6 +613,26 @@ def cmd_show(args) -> int:
         print(f"- {clip(a, 600)}")
     print()
     return 0
+
+
+# ---------------------------------------------------------------- 启动自检
+
+def gate_allows(args) -> bool:
+    """gate 为 dormant 时，检索/展开一律拒绝——防止模型忽略 SKILL.md 白花钱。
+
+    只用 CPU 的建索引不受影响：语料必须在休眠期继续长大，否则永远醒不过来。
+    """
+    if getattr(args, "force_gate", False):
+        return True
+    try:
+        g = json.loads(GATE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    if g.get("status") != "dormant":
+        return True
+    print(f"[休眠] {g.get('reason') or '语料还不够，暂不启用'}", file=sys.stderr)
+    print("       继续正常对话即可；每次会话结束会自动积累，够本后自动启用。", file=sys.stderr)
+    return False
 
 
 # ---------------------------------------------------------------- 概览
@@ -548,12 +676,14 @@ def main() -> int:
     p.add_argument("--limit", type=int, default=5, help="返回条数，默认 5")
     p.add_argument("--full", action="store_true", help="索引未命中时回扫全文（较慢）")
     p.add_argument("--json", action="store_true", help="输出 JSON")
+    p.add_argument("--force-gate", action="store_true", help="跳过启动自检，强制检索")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("show", help="展开会话内容")
     p.add_argument("session_id")
     p.add_argument("--max-user", type=int, default=12)
     p.add_argument("--max-asst", type=int, default=2)
+    p.add_argument("--force-gate", action="store_true", help="跳过启动自检，强制展开")
     p.set_defaults(func=cmd_show)
 
     p = sub.add_parser("stats", help="索引概览")

@@ -1,6 +1,6 @@
 # super-larder 使用说明（给新用户）
 
-> 一句话：把你在 WorkBuddy 里聊过的内容，在本机自动整理成一个可检索的知识库。
+> 一句话：把你在任意 AI 客户端里聊过的内容，在本机自动整理成一个可检索的知识库。
 > 全程用你自己的电脑算，**不调用线上模型、不花 token、不联网上传**。
 
 ---
@@ -36,12 +36,18 @@
 
 ### 第 1 步：放好技能
 
-把 `super-larder` 整个文件夹放到：
+把 `super-larder` 整个文件夹放进你的 Agent 读技能的位置：
 
-```
-Windows:  C:\Users\<你的用户名>\.workbuddy\skills\super-larder\
-macOS:    ~/.workbuddy/skills/super-larder/
-```
+| Agent | 放到哪里 |
+|---|---|
+| WorkBuddy / CodeBuddy | `~/.workbuddy/skills/super-larder/` |
+| Codex | `~/.codex/skills/super-larder/` |
+| Claude Code | `~/.claude/skills/super-larder/` |
+| 其他支持 SKILL.md 的 Agent | 它自己的 `skills/` 目录 |
+| 不确定 / 只是想在终端里用 | 任意目录都行，脚本不挑位置 |
+
+> 技能本身只依赖 Python，跟哪个 Agent 无关。**同一个库能同时读多家转录**，
+> 不需要为了换 Agent 重建。（Windows 把 `~` 换成 `C:\Users\<你的用户名>`）
 
 ### 第 2 步：初始化
 
@@ -49,7 +55,7 @@ macOS:    ~/.workbuddy/skills/super-larder/
 - **命令行**（任意系统）：
 
 ```bash
-cd ~/.workbuddy/skills/super-larder
+cd ~/.workbuddy/skills/super-larder    # 换成你实际放的位置
 python setup.py
 ```
 
@@ -63,9 +69,13 @@ python setup.py
 薄页面(<300字) 0｜缺更新日志 0
 ```
 
-### 第 3 步：重启 WorkBuddy
+### 第 3 步：重开一个会话
 
-让新技能被识别。之后在对话里说「接着上次」「查一下我以前做过没」，它就会自己去翻。
+让 Agent 重新读取技能列表。之后在对话里说「接着上次」「查一下我以前做过没」，它就会自己去翻。
+
+> 装完先看一眼自检结果：`python scripts/adapters.py` 会列出本机认出了哪些客户端、各有多少会话；
+> `python scripts/build.py stats` 会给出 `active` / `dormant`。
+> 刚装、语料少的时候是 `dormant`（休眠），这不影响正常使用——它在后台继续攒，够了会自己醒。
 
 ---
 

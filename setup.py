@@ -5,11 +5,11 @@
 做四件事，全部在本机完成，不联网（除首次装 jieba）：
   1. 检查 Python 版本
   2. 确保 jieba 可用（缺则自动 pip 安装）
-  3. 生成 config.json 并建好知识库目录
+  3. 生成 config.json 并建好知识库目录（自动发现各家客户端）
   4. 首次构建 + 校验 + 出审核报告
 
 用法：
-  python scripts/setup.py                    # 默认知识库 ~/.workbuddy/convo-kb
+  python setup.py                            # 默认知识库 ~/.super-larder
   python scripts/setup.py --kb D:/我的对话库   # 指定知识库位置
 """
 
@@ -105,10 +105,9 @@ def write_config(kb: Path) -> None:
         except Exception:
             cfg = {}
     cfg["kb_root"] = str(kb)
-    cfg.setdefault("projects_root", None)
-    if not cfg.get("projects_root"):
-        cfg["projects_root"] = None
-    cfg["_说明"] = "kb_root 是知识库落盘位置，可改成任意路径；projects_root 留空则用 ~/.workbuddy/projects"
+    cfg.pop("projects_root", None)      # v5 起改为自动发现，不再需要单一来源目录
+    cfg["_说明"] = ("kb_root 是知识库位置；转录来源自动发现（Codex / Claude Code / Gemini CLI / "
+                    "WorkBuddy）。要接自研 Agent，加 sources: [{\"agent\":\"generic\",\"root\":\"/path\"}]")
     CONFIG.parent.mkdir(parents=True, exist_ok=True)
     CONFIG.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -120,7 +119,7 @@ def run(*args: str) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(prog="setup.py", description="super-larder 初始化")
-    ap.add_argument("--kb", help="知识库目录，默认 ~/.workbuddy/convo-kb")
+    ap.add_argument("--kb", help="知识库目录，默认 ~/.super-larder")
     ap.add_argument("--skip-build", action="store_true", help="只做环境准备，不建库")
     args = ap.parse_args()
 
@@ -153,7 +152,7 @@ def main() -> int:
         if cfg_kb:
             kb = Path(cfg_kb).expanduser().resolve()
     if kb is None:
-        kb = Path.home() / ".workbuddy" / "convo-kb"
+        kb = Path.home() / ".super-larder"
     for sub in ("raw", "wiki", "_系统"):
         (kb / sub).mkdir(parents=True, exist_ok=True)
     write_config(kb)
@@ -176,6 +175,8 @@ def main() -> int:
     print("  完成。以后每次想更新，二选一：")
     _launcher = "setup.command" if sys.platform == "darwin" else (
         "setup.cmd" if os.name == "nt" else "setup.py")
+    if not (SKILL / _launcher).exists():
+        _launcher = "setup.py"
     print(f"    双击 SKILL 目录下的 {_launcher}")
     print(f"    或 python {BUILD} build")
     print("=" * 52)

@@ -1,17 +1,14 @@
 # Super Larder
 
-**The point is saving tokens. An archive, not a memory.**
+**An archive, not a memory.**
 
 A *larder* is where you keep what you've already paid for, so winter costs nothing.
 
 [中文](README.zh-CN.md) · English
 
-Turns your past conversations into a local, searchable archive so the assistant stops re-reading raw transcripts — **without calling a single LLM, without a GPU, without uploading a byte. Zero tokens to build; 84–94% fewer tokens on every revisit.**
+Turns your past conversations into a local, searchable archive — **without calling a single LLM, without a GPU, without uploading a byte.**
 
 ### Read once. Answer forever.
-
-
-![Super Larder](assets/showcase.jpg)
 
 ---
 
@@ -45,30 +42,86 @@ your client writes transcripts ──> build.py (pure CPU) ──> archive ─�
 
 ---
 
+## Supported agents
+
+**No configuration required** — it auto-discovers and auto-detects:
+
+| Client | Where it reads |
+|---|---|
+| Codex (CLI / Desktop) | `~/.codex/sessions/**/rollout-*.jsonl` |
+| Codex Desktop live threads | `~/.codex/thread_history_1.sqlite` |
+| Claude Code | `~/.claude/projects/<slug>/<uuid>.jsonl` |
+| Gemini CLI | `~/.gemini/tmp/<proj>/chats/*.json` |
+| Qwen Code / iFlow CLI | `~/.qwen/tmp`, `~/.iflow/tmp` |
+| WorkBuddy / CodeBuddy | `~/.workbuddy|~/.codebuddy/projects/<proj>/<sid>.jsonl` |
+| GitHub Copilot Chat (VS Code, Cursor, Windsurf, Trae, Kiro) | `.../User/workspaceStorage/*/chatSessions/*.json` |
+| Cline / Roo Code | `.../globalStorage/saoudrizwan.claude-dev/tasks/*/api_conversation_history.json` |
+| Continue | `~/.continue/sessions/*.json` |
+| OpenCode | `~/.local/share/opencode/storage/message/<sid>/*.json` |
+| ChatGPT export | `conversations.json` |
+| aider | `.aider.chat.history.md` |
+| Anything else | Generic reader: any JSONL/JSON with `role` + `content` |
+
+Check what it found on your machine (zero tokens):
+
+```bash
+python3 scripts/adapters.py
+```
+
+Point it at a custom agent from `config.json`:
+
+```json
+{ "sources": [{ "agent": "generic", "root": "~/my-agent/history" }] }
+```
+
+Switching agents does not mean rebuilding: one archive reads them all, and every page lists which client each session came from.
+
+---
+
+## It decides whether it is worth running
+
+This is the part most tools skip.
+
+After install — and on every rebuild — it computes three numbers:
+
+| Metric | Meaning |
+|---|---|
+| sessions | how many conversations it has seen |
+| compression | raw tokens ÷ archive tokens |
+| payoff | typical session tokens ÷ typical page tokens |
+
+If reading one page would cost more than reading the raw session it replaces, the skill goes **dormant**: no lookups, no page reads, no interruption. It keeps indexing quietly so it can cross the threshold on its own, and flips to `active` on the first rebuild that qualifies.
+
+An 8-session corpus measured here: compression 1.0:1, payoff 0.12 → dormant. A 227-session corpus: 56:1, payoff 1.21 → active.
+
+---
+
 ## Measured
 
-**What you actually save is tokens.** Building the archive costs zero; every revisit costs a fraction of re-reading the raw sessions.
-
-101 sessions / 15,459 messages / 627 MB of raw transcripts, on an ordinary desktop:
+227 sessions / 2.24M tokens of raw transcripts, on an ordinary desktop:
 
 | Metric | Value |
 |---|---|
-| Cold build | **2.9 s** |
-| Incremental rebuild | **0.8 s** |
-| Archive size | 22 pages / 39,946 tokens |
-| Compression | **73 : 1** (2.93M → 40K tokens) |
+| Cold build | **2.0 s** |
+| Incremental rebuild | **0.3–1.4 s** |
+| Archive size | 28 pages / 39,691 tokens |
+| Compression | **56.6 : 1** (2.24M → 40K tokens) |
+| Median session | 1,547 tokens |
+| Median page | 1,266 tokens |
 | Tokens spent building | **0** |
 | Retrieval lookup | **17 ms** |
 
-Cost of reading (average page: 1,815 tokens):
+Cost of reading (median page: 1,266 tokens):
 
 | Task | Without | With | Saved |
 |---|---|---|---|
-| Revisit one topic (2 median sessions) | 11,390 | 1,815 | **84%** |
-| Revisit one large session | 29,610 | 1,815 | **94%** |
-| Read matched lines only | 11,390 | 241 | **98%** |
+| Revisit one topic (2 median sessions) | 3,094 | 1,266 | **59%** |
+| Revisit one large session | 29,610 | 1,266 | **96%** |
+| Read matched lines only | 3,094 | 241 | **92%** |
 
-> "98.6%" would be the figure if you read the entire corpus. Nobody does that. Quote 84–94%.
+> These are measured on a 227-session corpus, not projections. The saving depends entirely on
+> how big the sessions being replaced are — which is exactly why the skill self-checks before
+> it runs. Quote 59–96% per revisit, never a flat "98%". 
 
 ---
 
@@ -166,8 +219,8 @@ On a small corpus it inverts: 9 short sessions gave 3 pages, all `grep` — read
 - **No reasoning uplift.** It supplies leads, not conclusions.
 - **Keyword retrieval, not semantic.** Synonyms can be missed.
 - **Topic names drift.** Every build re-clusters the whole corpus, so new sessions can merge or rename pages.
-- **WorkBuddy transcript format only.** Adapt `parse_session()` for other clients.
-- **Savings are bounded.** ~8% of monthly spend in steady state, 84–94% per revisit. It won't halve your bill.
+- **Twelve transcript formats ship in the box; the long tail does not.** Anything with `role` + `content` is read by the generic adapter — but a client that encrypts or shards its history needs its own adapter.
+- **Savings are bounded.** 59–96% per revisit, depending on how long the replaced sessions were. It won't halve your bill.
 
 ---
 

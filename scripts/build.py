@@ -66,7 +66,7 @@ def resolve_kb() -> Path:
         return Path(os.environ["CONVO_KB"]).expanduser()
     if CONFIG.get("kb_root"):
         return Path(CONFIG["kb_root"]).expanduser()
-    return WB_HOME / "convo-kb"
+    return Path.home() / ".super-larder"
 
 
 LIB = resolve_kb()
@@ -77,9 +77,11 @@ INDEX = LIB / "index.md"
 KWFILE = SYS / "keywords.json"
 LOGFILE = SYS / "log.md"
 STATE = SYS / "state.json"        # 已处理会话指纹，用于增量
+GATEFILE = SYS / "gate.json"      # 启动自检：语料够不够本
 CACHE = SYS / "sessions.json"     # 解析结果缓存：文件没变就不重读 600MB
 
 # 会话转录来源，默认 WorkBuddy 的项目目录
+# 兼容旧配置：新版本按 adapters.DEFAULT_ROOTS 自动发现，不再依赖单一目录。
 PROJECTS = Path(CONFIG["projects_root"]).expanduser() if CONFIG.get("projects_root") \
     else (WB_HOME / "projects")
 
@@ -271,94 +273,24 @@ def terms_of(text: str) -> Counter:
     return c
 
 
-# 脱敏：本库会自动抄录历史会话，其中难免出现口令。原文照录的原则不能凌驾于安全之上。
-#
-# 两套规则，职责必须分开：
-#   ① 就地脱敏（_REDACT_RES）—— 每条规则自己认得「值在哪」，就地替换。误伤范围小。
-#   ② 全局拉黑（_SECRETS）—— 只收「强上下文」的口令值（password=、密码是），
-#      因为这类值会在别处裸出现，必须全库抹掉。
-#
-# 教训：早期把 token、账号/、admin/ 这类弱上下文也丢进全局名单，结果 session、commands、
-# admin 这些普通词被当成口令，把 YAML 的 `source_sessions`、`status` 键名都抹成了 ***。
-# 宁可少抹，不能误伤——误伤会让每一页结构失效。
-_SECRETS: set[str] = set()
-
-# 只有这些强上下文才允许「全局拉黑」
-_SECRET_FINDERS = [
-    re.compile(r"(?i)(?:pass(?:word|wd)?|pwd)\s*[:=]\s*(\S{4,32})"),
-    re.compile(r"(?:密码|口令|密钥|验证码)\s*(?:是|为|[:：=])?\s*([A-Za-z0-9!@#$%^&*._\-]{4,32})"),
-]
-
-# 明显是普通词、不可能是口令的候选，直接拒绝
-_NOT_SECRET = set("""
-session sessions status active commands command info overview services service return admin root
-user users test testing error errors true false none null python windows linux docker config
-main index page pages file files data value name type size date time
-""".split())
-
-_IPV4 = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
-
-# 就地脱敏：每条规则自带定位，保留「这里曾有凭据」的事实
-_REDACT_RES = [
-    (re.compile(r"(?i)((?:pass(?:word|wd)?|pwd|secret|api[_-]?key|access[_-]?key|token)\s*[:=]\s*)[^\s,;，；\"'（）()`|\[\]{}<>]{2,}"), r"\1***"),
-    (re.compile(r"(密码|口令|密钥|验证码)(\s*(?:是|为)?\s*[:：=]?\s*)([A-Za-z0-9!@#$%^&*._\-]{4,})"), r"\1\2***"),
-    (re.compile(r"(?i)\b(admin|root|username|user)(\s*/\s*)([A-Za-z0-9!@#$%^&*._\-]{4,})"), r"\1\2***"),
-    (re.compile(r"(?<!\d)(1[3-9]\d)\d{4}(\d{4})(?!\d)"), r"\1****\2"),
-]
-
-
-def _looks_secret(v: str) -> bool:
-    """普通词不当口令；含数字或符号的才可能是真口令。"""
-    if not (4 <= len(v) <= 32):
-        return False
-    if _IPV4.match(v) or v.lower() in _NOT_SECRET:
-        return False
-    return any(c.isdigit() for c in v) or any(c in "!@#$%^&*._-" for c in v)
-
-
-def collect_secrets(text: str) -> None:
-    """收集**强上下文**里的口令值，供全库抹除。"""
-    if not text:
-        return
-    for pat in _SECRET_FINDERS:
-        for m in pat.finditer(text):
-            v = m.group(1).strip(".,;:，。）)【】[]")
-            if _looks_secret(v):
-                _SECRETS.add(v)
-
-
-def _redact_inplace(text: str) -> str:
-    for pat, rep in _REDACT_RES:
-        text = pat.sub(rep, text)
-    return text
-
-
-def redact(text: str) -> str:
-    if not text:
-        return text
-    text = _redact_inplace(text)
-    for v in sorted(_SECRETS, key=len, reverse=True):
-        if v in text:
-            text = text.replace(v, "***")
-    return text
-
-
-def redact_page(text: str) -> str:
-    """页面用：YAML 头只做就地脱敏，正文才允许全局抹除。
-
-    YAML 键名（source_sessions、status）绝不能被全局名单碰到，否则页结构直接失效。
-    """
-    m = re.match(r"^(---\n.*?\n---\n)(.*)$", text, re.S)
-    if not m:
-        return redact(text)
-    return _redact_inplace(m.group(1)) + redact(m.group(2))
-
+# 脱敏的唯一实现在 redactlib.py —— build 与 recall 共用，避免「一个入口抹了、
+# 另一个入口漏了」。实测踩过：recall 的检索索引里存过未脱敏的 API Key。
+from redactlib import (collect_secrets, redact, redact_page,  # noqa: E402
+                       secrets_clear)
 
 # 结论句标记：出现这些词的句子更可能是可复用结论
 CONCL_MARK = (
     "结论", "所以", "因此", "最终", "定稿", "确认", "实测", "决定", "改为", "改用",
     "根因", "原因", "修复", "解决", "踩坑", "不要", "不能用", "必须", "注意",
     "结果是", "验证", "生效", "失败", "报错", "发现", "纠正", "推翻", "作废",
+)
+
+# 征询/推销句：即使带了「需要/确认」也不能当结论。`要不要` 含 `不要`、
+# `需要先确认` 含 `确认`，靠这个正则前置挡掉。
+_OFFER_RE = re.compile(
+    r"(?:要不要我|要不要先|需要我|是否需要|需不需要|我可以(?:帮你|为你|继续|先)|"
+    r"你希望(?:我)?|请问|请确认|请告诉我|告诉我(?:你|您的)|你可以选择|"
+    r"如果你(?:需要|想要|希望)|如需|下一步(?:我)?(?:可以|要不要))"
 )
 
 # 可复用产物：路径、版本号、命令、URL
@@ -376,6 +308,8 @@ _STRIP_RES = [
     re.compile(r"\\\\[\w.\-\\]+"),
     re.compile(r"https?://\S+", re.I),
     re.compile(r"@['\"]?[A-Za-z]:\\[^\s]+"),
+    re.compile(r"(?:/[\w.\-]+){2,}/?"),      # /Users/xxx/Library/... 这类 POSIX 绝对路径
+    re.compile(r"~/[\w.\-/]+"),
     re.compile(r"\b[0-9a-f]{8,}\b", re.I),
     re.compile(r"\b\w+\.(?:py|js|ts|json|md|txt|log|png|jpg|jpeg|gif|webp|svg|apk|exe|bat|cmd|ps1|sh|yml|yaml|csv|xlsx|docx|pptx|mp4|zip)\b", re.I),
     re.compile(r"\b\d+(?:\.\d+)?\s*(?:GB|MB|KB|TB|ms|s|px|mm|cm|kg|g|W|V|A)\b"),
@@ -435,68 +369,81 @@ def strip_noise(text: str) -> str:
     return text
 
 
-# ------------------------------------------------------------------ 会话解析
+# ---------------------------------------------------------------- 会话解析
+# 各客户端的格式差异全部收在 adapters.py；这里只保留清洗与统一结构，
+# 保证「脱敏/抽词/聚类」只有一套规则，不会因为多接一个客户端就分叉。
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import adapters  # noqa: E402
+
+
+def est_tokens(text: str) -> int:
+    """粗略 token 估算：中文约 1.5 字/token，英文约 3.8 字符/token。
+
+    不引第三方分词器，因为这里只需要「够用来比较大小」的量级；
+    为它引入带模型文件的 tiktoken 不划算。
+    """
+    if not text:
+        return 0
+    cjk = len(_CJK.findall(text))
+    return int(cjk / 1.5 + (len(text) - cjk) / 3.8) + 1
+
+
+def _clean_raw(raw: dict, path: Path) -> dict | None:
+    """把适配器给的原始消息洗干净，并补上派生字段。"""
+    prompts: list[str] = []
+    for x in raw.get("prompts", []):
+        t = clean(x)
+        if t and (not prompts or prompts[-1] != t):
+            prompts.append(t)
+    asst: list[str] = []
+    for x in raw.get("asst", []):
+        t = clean(x)
+        if t:
+            asst.append(t)
+
+    title = clean(raw.get("title") or "")
+    if not title:
+        # 客户端的首条消息常常只有「？」「继续」，挑第一条有实质内容的
+        title = next((x[:30] for x in prompts if len(x) >= 8),
+                     prompts[0][:30] if prompts else "")
+    if not prompts and not title:
+        return None
+
+    try:
+        st = path.stat()
+    except OSError:
+        st = None
+    return {
+        "id": raw["id"],
+        "title": title or "(无标题)",
+        "cwd": raw.get("cwd") or "",
+        "start": raw["start"],
+        "end": raw["end"],
+        "msgs": raw.get("msgs", 0),
+        "prompts": prompts,
+        "asst": asst,
+        "agent": raw.get("agent", "unknown"),
+        "tokens": est_tokens("\n".join(prompts) + "\n" + "\n".join(asst)),
+        "mtime": int(st.st_mtime) if st else 0,
+        "size": st.st_size if st else 0,
+    }
+
+
+def parse_sessions(path: Path) -> list[dict]:
+    """一个来源可能产出多个会话（SQLite 里一个线程一个会话）。"""
+    out = []
+    for raw in adapters.iter_sessions(path):
+        s = _clean_raw(raw, path)
+        if s:
+            out.append(s)
+    return out
+
 
 def parse_session(path: Path) -> dict | None:
-    title, cwd = "", ""
-    prompts: list[str] = []
-    asst: list[str] = []
-    start = end = None
-    n = 0
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                # 便宜的字符串预筛：日志里约九成是 function_call_result 等大块工具输出，
-                # 对它们做完整 JSON 解析纯属浪费。只有可能命中目标的行走解析。
-                if ('"type":"message"' not in line
-                        and '"type": "message"' not in line
-                        and '"ai-title"' not in line):
-                    continue
-                try:
-                    rec = json.loads(line)
-                except Exception:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                ts = rec.get("timestamp")
-                if isinstance(ts, (int, float)) and ts > 1e11:
-                    ts /= 1000.0
-                if isinstance(ts, (int, float)):
-                    start = ts if start is None else min(start, ts)
-                    end = ts if end is None else max(end, ts)
-                t = rec.get("type")
-                if t == "ai-title":
-                    v = rec.get("aiTitle")
-                    if isinstance(v, str) and v.strip():
-                        title = v.strip()
-                elif t == "message":
-                    n += 1
-                    if not cwd and isinstance(rec.get("cwd"), str):
-                        cwd = rec["cwd"]
-                    txt = clean(content_text(rec))
-                    if not txt:
-                        continue
-                    if (rec.get("role") or "").lower() == "user":
-                        if not prompts or prompts[-1] != txt:
-                            prompts.append(txt)
-                    else:
-                        asst.append(txt)
-    except Exception:
-        return None
-    if start is None or (not prompts and not title):
-        return None
-    return {
-        "id": path.stem,
-        "title": title or (prompts[0][:30] if prompts else "(无标题)"),
-        "cwd": cwd,
-        "start": start, "end": end or start, "msgs": n,
-        "prompts": prompts, "asst": asst,
-        "mtime": int(path.stat().st_mtime),
-        "size": path.stat().st_size,
-    }
+    """单会话入口，保留给外部调用。"""
+    got = parse_sessions(path)
+    return got[0] if got else None
 
 
 def sentences(text: str) -> list[str]:
@@ -512,6 +459,12 @@ def conclusions(sess: dict, cap: int = 14) -> list[str]:
         for s in sentences(msg):
             s = s.strip(" -·*#>")
             if not (16 <= len(s) <= 220):
+                continue
+            # 反问句和征求确认不是结论。子串匹配的坑：`要不要` 里含 `不要`、
+            # `需要先确认` 里含 `确认`，都能命中下面的标记词，所以必须前置挡掉。
+            if s.rstrip().endswith(("？", "?")):
+                continue
+            if _OFFER_RE.search(s):
                 continue
             if not any(m in s for m in CONCL_MARK):
                 continue
@@ -635,153 +588,170 @@ def ymd(ts: float) -> str:
 _READ_RATIO = 1.5
 
 
-def _page_chars(group, sessions_):
-    """估算页面字符数：先渲染一次不算元数据，取正文长度。"""
-    members = [sessions_[x] for x in group["sessions"]]
-    return _page_chars_text(members)
-
-
-def _page_chars_text(members) -> int:
-    """页面正文的近似字符数：标题 + 表头 + 结论 + 诉求 + 产物，各按实际内容估。"""
-    n = 400                                    # YAML 与章节骨架的固定开销
-    for m in members:
-        n += len(m.get("title", "")) + 40
-        n += sum(len(c) + 40 for c in m.get("_concl", [])[:4])
-        n += sum(len(p) + 30 for p in m.get("prompts", [])[:2])
-    return n
+# 页面的绝对成本上限：再划算也不该让模型读一个几万 token 的页。
+# 只按「覆盖/本页」比值判断会随语料增长失效——300 个会话的月档页照样标 page。
+MAX_PAGE_TOKENS = int((CONFIG.get("read_hint") or {}).get("max_page_tokens", 6000))
 
 
 def _covered_chars(group, sessions_) -> int:
     return sum(sessions_[x].get("_raw_chars", 0) for x in group["sessions"])
 
 
-def _hint_by_num(payload: int, covered: int) -> str:
-    if covered >= payload * _READ_RATIO:
-        return "page"          # 读整页划算
-    if covered < payload:
-        return "grep"          # 读整页是亏的，只取命中行或看原文
+def _covered_tokens(group, sessions_) -> int:
+    return sum(sessions_[x].get("tokens", 0) for x in group["sessions"])
+
+
+def _hint_by_tokens(page_tokens: int, covered_tokens: int, n_sessions: int = 0) -> str:
+    if page_tokens > MAX_PAGE_TOKENS:
+        return "grep"          # 绝对上限：页太大，读整页一定亏
+    # 稀释判据：一个页里塞了十几个会话，说明它是个「索引」，不是「答案」。
+    # 此时读整页＝为了两行答案读三十段，先看命中行即可。
+    if n_sessions >= 12 and page_tokens > 2500:
+        return "either"
+    if covered_tokens >= page_tokens * _READ_RATIO:
+        return "page"          # 覆盖原文远超本页，读整页稳赚
+    if covered_tokens < page_tokens:
+        return "grep"          # 本页比原文还大，只取命中行
     return "either"
 
 
-def _read_hint(group, sessions_) -> str:
-    return _hint_by_num(_page_chars(group, sessions_), _covered_chars(group, sessions_))
+def _yaml_head(title: str, date: str, tags: list[str], ents: list[str],
+               n_sessions: int, body: str, covered_chars: int, covered_tokens: int) -> list[str]:
+    """先渲染正文、再量长度写进 YAML。
+
+    早期版本用「估算」填 payload_chars，结果与实际差到 7.6 倍，
+    而 read_hint 建立在这个数上——判据直接失真。现在一律实测。
+    """
+    ptok = est_tokens(body)
+    return [
+        "---",
+        f"title: {title}",
+        f"date: {date}",
+        "type: synthesis",
+        f"tags: [{', '.join(_uniq(tags))}]",
+        f"entities: [{', '.join(_uniq(ents)[:6])}]",
+        "status: active",
+        "confidence: high",
+        "relations: []",
+        f"generated_by: {GENERATOR}",
+        f"source_sessions: {n_sessions}",
+        f"payload_chars: {len(body)}",
+        f"payload_tokens: {ptok}",
+        f"covered_chars: {covered_chars}",
+        f"covered_tokens: {covered_tokens}",
+        f"read_hint: {_hint_by_tokens(ptok, covered_tokens, n_sessions)}",
+        "reviewed:",
+        "---",
+    ]
 
 
 def render_page(group: dict, sessions: dict[str, dict], kw: dict[str, list[str]]) -> str:
     anchor = group["anchor"]
     members = sorted((sessions[s] for s in group["sessions"]), key=lambda x: x["end"])
-    title = anchor
     titles = [m["title"] for m in members]
     tags = ["对话沉淀"] + _pick_terms(members, anchor, 3, 3)
     ents = [anchor] + _pick_terms(members, anchor, 5, 3)
 
-    L: list[str] = []
-    L.append("---")
-    L.append(f"title: {title}")
-    L.append(f"date: {ymd(max(m['end'] for m in members))}")
-    L.append("type: synthesis")
-    L.append(f"tags: [{', '.join(_uniq(tags))}]")
-    L.append(f"entities: [{', '.join(_uniq(ents)[:6])}]")
-    L.append("status: active")
-    L.append("confidence: high")
-    L.append("relations: []")
-    L.append(f"generated_by: {GENERATOR}")
-    L.append(f"source_sessions: {len(members)}")
-    L.append(f"payload_chars: {_page_chars(group, sessions)}")
-    L.append(f"covered_chars: {_covered_chars(group, sessions)}")
-    L.append(f"read_hint: {_read_hint(group, sessions)}")
-    L.append("reviewed:")
-    L.append("---")
-    L.append("")
-    L.append(f"# {title}·对话沉淀")
-    L.append("")
-    L.append("> 本页由脚本从历史会话中原样摘录，未经模型改写；引号内为原话，可回溯到会话 ID。")
-    L.append("")
-    L.append("## 涉及会话")
-    L.append("")
-    L.append("| 日期 | 会话标题 | 消息数 | 会话 ID |")
-    L.append("|---|---|---|---|")
+    B: list[str] = []
+    B.append(f"# {anchor}·对话沉淀")
+    B.append("")
+    B.append("> 本页由脚本从历史会话中原样摘录，未经模型改写；引号内为原话，可回溯到会话 ID。")
+    B.append("")
+    B.append("## 涉及会话")
+    B.append("")
+    B.append("| 日期 | 会话标题 | 来源 | 消息数 | 会话 ID |")
+    B.append("|---|---|---|---|---|")
     for m in members:
-        L.append(f"| {ymd(m['end'])} | {_esc(m['title'])} | {m['msgs']} | `{m['id'][:8]}` |")
-    L.append("")
-    L.append("## 关键结论（原文摘录）")
-    L.append("")
+        B.append(f"| {ymd(m['end'])} | {_esc(m['title'])} | {m.get('agent', '?')} "
+                 f"| {m['msgs']} | `{m['id'][:8]}` |")
+    B.append("")
+    B.append("## 关键结论（原文摘录）")
+    B.append("")
     for m in members:
         for c in m["_concl"][:4]:
-            L.append(f"- {ymd(m['end'])}｜「{_esc(c)}」 —— 出自《{_esc(m['title'])}》`{m['id'][:8]}`")
+            B.append(f"- {ymd(m['end'])}｜「{_esc(c)}」 —— 出自《{_esc(m['title'])}》`{m['id'][:8]}`")
     if not any(m["_concl"] for m in members):
-        L.append("- （本组会话未抽到带结论标记的整句，见下方用户请求）")
-    L.append("")
-    L.append("## 用户诉求")
-    L.append("")
+        B.append("- （本组会话未抽到带结论标记的整句，见下方用户请求）")
+    B.append("")
+    B.append("## 用户诉求")
+    B.append("")
     for m in members:
-        for p in m["prompts"][:2]:
-            L.append(f"- {ymd(m['end'])}｜{_esc(p[:180])}")
-    L.append("")
-    L.append("## 可复用产物")
-    L.append("")
+        for pr in m["prompts"][:2]:
+            # 顺序很重要：先脱敏、再截断。反过来会把 `sk-ws-...` 切成 `sk-ws-`，
+            # 正则认不出半截密钥，于是它以「看起来无害」的形式留在页面上。
+            B.append(f"- {ymd(m['end'])}｜{_esc(redact(pr)[:180])}")
+    B.append("")
+    B.append("## 可复用产物")
+    B.append("")
     got = False
     for m in members:
         for kind, v in m["_prod"][:4]:
-            L.append(f"- `{kind}` {_esc(v)}  —— 《{_esc(m['title'])}》")
+            B.append(f"- `{kind}` {_esc(v)}  —— 《{_esc(m['title'])}》")
             got = True
     if not got:
-        L.append("- （无路径/命令级产物）")
-    L.append("")
-    L.append("## 关键词")
-    L.append("")
-    L.append("　".join(f"`{t}`" for t in kw.get(anchor, [])[:10]))
-    L.append("")
-    L.append("## 更新日志")
-    L.append("")
-    L.append(f"- {time.strftime('%Y-%m-%d %H:%M')}｜{GENERATOR} 生成｜来源 {len(members)} 个会话（{titles[0][:20]} 等）")
-    L.append("")
-    return "\n".join(L)
+        B.append("- （无路径/命令级产物）")
+    B.append("")
+    B.append("## 关键词")
+    B.append("")
+    B.append("　".join(f"`{t}`" for t in kw.get(anchor, [])[:10]))
+    B.append("")
+    B.append("## 更新日志")
+    B.append("")
+    B.append(f"- {time.strftime('%Y-%m-%d %H:%M')}｜{GENERATOR} 生成｜来源 {len(members)} 个会话"
+             f"（{titles[0][:20]} 等）")
+    B.append("")
+
+    body = "\n".join(B)
+    head = _yaml_head(anchor, ymd(max(m["end"] for m in members)), tags, ents,
+                      len(members), body,
+                      _covered_chars(group, sessions), _covered_tokens(group, sessions))
+    return "\n".join(head + ["", body])
 
 
 def render_month(month: str, members_in: dict[str, dict]) -> str:
     """未归入主题的会话按月归档，保证「每个会话都能被找到」，又不制造几十个碎页。"""
     members = sorted(members_in.values(), key=lambda x: x["end"])
-    L = ["---",
-         f"title: {month} 会话档案",
-         f"date: {ymd(members[-1]['end'])}",
-         "type: synthesis",
-         f"tags: [对话沉淀, 按时间归档, {month}]",
-         f"entities: [{', '.join(_uniq(_top_entities(members))[:5])}]",
-         "status: active",
-         "confidence: high",
-         "relations: []",
-         f"generated_by: {GENERATOR}",
-         f"source_sessions: {len(members)}",
-         f"payload_chars: {_page_chars_text(members)}",
-         f"covered_chars: {sum(m.get('_raw_chars', 0) for m in members)}",
-         f"read_hint: {_hint_by_num(_page_chars_text(members), sum(m.get('_raw_chars', 0) for m in members))}",
-         "reviewed:",
-         "---", "",
-         f"# {month} 会话档案", "",
-         "> 本月未归入专门主题的会话，按时间排列。主题明确的会话已单独成页。", "",
-         "## 会话清单", "",
-         "| 日期 | 会话 | 消息数 | 关键词 | ID |",
-         "|---|---|---|---|---|"]
+    B: list[str] = []
+    B.append(f"# {month} 会话档案")
+    B.append("")
+    B.append("> 本月未归入专门主题的会话，按时间排列。主题明确的会话已单独成页。")
+    B.append("")
+    B.append("## 会话清单")
+    B.append("")
+    B.append("| 日期 | 会话 | 来源 | 消息数 | 关键词 | ID |")
+    B.append("|---|---|---|---|---|---|")
     for m in members:
         kws = "、".join(m["_ent"][:3]) or "—"
-        L.append(f"| {ymd(m['end'])} | {_esc(m['title'])} | {m['msgs']} | {_esc(kws)} | `{m['id'][:8]}` |")
-    L.append("")
-    L.append("## 代表性结论")
-    L.append("")
+        B.append(f"| {ymd(m['end'])} | {_esc(m['title'])} | {m.get('agent', '?')} "
+                 f"| {m['msgs']} | {_esc(kws)} | `{m['id'][:8]}` |")
+    B.append("")
+    B.append("## 代表性结论")
+    B.append("")
     any_c = False
     for m in members:
         for c in m["_concl"][:1]:
-            L.append(f"- {ymd(m['end'])}｜「{_esc(c)}」 —— 《{_esc(m['title'])}》")
+            B.append(f"- {ymd(m['end'])}｜「{_esc(c)}」 —— 《{_esc(m['title'])}》")
             any_c = True
     if not any_c:
-        L.append("- （本月会话未抽到带结论标记的整句）")
-    L.append("")
-    L.append("## 更新日志")
-    L.append("")
-    L.append(f"- {time.strftime('%Y-%m-%d %H:%M')}｜{GENERATOR} 生成｜来源 {len(members)} 个会话")
-    L.append("")
-    return "\n".join(L)
+        B.append("- （本月会话未抽到带结论标记的整句）")
+    B.append("")
+    B.append("## 更新日志")
+    B.append("")
+    B.append(f"- {time.strftime('%Y-%m-%d %H:%M')}｜{GENERATOR} 生成｜来源 {len(members)} 个会话")
+    B.append("")
+
+    body = "\n".join(B)
+    head = _yaml_head(f"{month} 会话档案", ymd(members[-1]["end"]),
+                      ["对话沉淀", "按时间归档", month],
+                      _uniq(_top_entities(members))[:5], len(members), body,
+                      sum(m.get("_raw_chars", 0) for m in members),
+                      sum(m.get("tokens", 0) for m in members))
+    return "\n".join(head + ["", body])
+
+
+_DISPLAY_EN_STOP = {"important", "summary", "note", "notes", "step", "steps", "example",
+                    "result", "results", "output", "input", "value", "values", "true", "false",
+                    "must", "save", "saved", "should", "need", "needs", "done", "todo"}
 
 
 def _display_ok(t: str) -> bool:
@@ -795,6 +765,8 @@ def _display_ok(t: str) -> bool:
     if t in STOP_BIGRAM or t in VERB_CN or t in GENERIC_CN:
         return False
     if t.isascii():
+        if t.lower() in STOP_EN or t.lower() in _DISPLAY_EN_STOP:
+            return False
         return len(t) >= 3 and any(c.isupper() for c in t)
     if any(ch in t for ch in "啥吗呢吧啊呗嘛么哦呀啦") or t in INTERROG:
         return False          # 口语与疑问碎片，如「啥意思」「是不是」
@@ -865,10 +837,17 @@ def render_raw(sess: dict) -> str:
 
 # ------------------------------------------------------------------ 索引 / 日志
 
-def render_index(pages: list[dict], total_sessions: int) -> str:
+def render_index(pages: list[dict], total_sessions: int, gate: dict | None = None) -> str:
+    gate = gate or {}
+    status = gate.get("status", "unknown")
+    flag = "🟢 可启用" if status == "active" else ("🔴 休眠中" if status == "dormant" else "—")
     L = ["# 对话库 索引", "",
          "> 由技能包 `super-larder` 的 `scripts/build.py` 自动维护，**不要手改**。",
-         f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M')}｜已沉淀会话：{total_sessions}｜主题页：{len(pages)}", "",
+         f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M')}｜已沉淀会话：{total_sessions}"
+         f"｜主题页：{len(pages)}",
+         f"> 自检状态：**{flag}**｜{gate.get('reason', '')}",
+         f"> 压缩比 {gate.get('compression', 0)}:1｜典型会话 {gate.get('median_session_tokens', 0)} token"
+         f"｜典型页 {gate.get('median_page_tokens', 0)} token", "",
          "## 主题页", "",
          "| 主题 | 会话数 | 最近活跃 | 文件 |",
          "|---|---|---|---|"]
@@ -894,6 +873,63 @@ def append_log(rows: list[str]) -> None:
             fh.write(r + "\n")
 
 
+# ------------------------------------------------------------------ 启动自检
+
+def _median(xs: list[int]) -> int:
+    xs = sorted(x for x in xs if x)
+    if not xs:
+        return 0
+    m = len(xs) // 2
+    return xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) // 2
+
+
+def compute_gate(sessions: dict, pages: list[dict]) -> dict:
+    """判断这个库现在到底省不省 token。
+
+    三个条件全部成立才允许启用：
+      ① 会话数够多，聚类才有意义；
+      ② 压缩比够高（原始语料 ÷ 全库页数），说明真有大量可压内容；
+      ③ 一页的成本不超过一个典型会话——否则「读一页」比「直接读会话」还贵，
+         这正是小语料反亏的根因（实测 9 个会话时读页 1112 token vs 读原文 486）。
+    """
+    sess_tokens = [s.get("tokens", 0) for s in sessions.values() if s.get("tokens")]
+    page_tokens = [x.get("tokens", 0) for x in pages if x.get("tokens")]
+    raw_total = sum(sess_tokens)
+    page_total = sum(page_tokens)
+    med_sess = _median(sess_tokens)
+    med_page = _median(page_tokens)
+    compression = (raw_total / page_total) if page_total else 0.0
+    payoff = (med_sess / med_page) if med_page else 0.0
+
+    cfg = CONFIG.get("gate") or {}
+    min_sessions = int(cfg.get("min_sessions", 20))
+    min_compression = float(cfg.get("min_compression", 8))
+    min_payoff = float(cfg.get("min_payoff", 1.0))
+
+    reasons = []
+    if len(sess_tokens) < min_sessions:
+        reasons.append(f"会话只有 {len(sess_tokens)} 个，至少需要 {min_sessions} 个")
+    if compression < min_compression:
+        reasons.append(f"压缩比 {compression:.1f}:1，至少需要 {min_compression:.0f}:1")
+    if payoff < min_payoff:
+        reasons.append(f"典型会话 {med_sess} token，不足一页（{med_page} token）")
+    return {
+        "status": "dormant" if reasons else "active",
+        "checked_at": time.strftime("%Y-%m-%d %H:%M"),
+        "sessions": len(sess_tokens),
+        "pages": len(page_tokens),
+        "raw_tokens": raw_total,
+        "page_tokens": page_total,
+        "median_session_tokens": med_sess,
+        "median_page_tokens": med_page,
+        "compression": round(compression, 2),
+        "payoff": round(payoff, 2),
+        "thresholds": {"min_sessions": min_sessions, "min_compression": min_compression,
+                       "min_payoff": min_payoff},
+        "reason": "；".join(reasons) if reasons else "三个条件均满足，可启用",
+    }
+
+
 # ------------------------------------------------------------------ 构建
 
 def cmd_build(args) -> int:
@@ -901,11 +937,22 @@ def cmd_build(args) -> int:
     for d in (RAW, WIKI, SYS):
         d.mkdir(parents=True, exist_ok=True)
 
-    files = sorted(PROJECTS.glob("*/*.jsonl"))
+    sources = adapters.discover(CONFIG.get("sources") or [],
+                                use_defaults=not CONFIG.get("sources_only"))
+    files: list[Path] = []
+    seen_files: set[str] = set()
+    for src in sources:
+        for f in src["files"]:
+            if str(f) in seen_files:
+                continue
+            seen_files.add(str(f))
+            files.append(f)
     if not files:
-        print(f"尚未发现历史会话（{PROJECTS}）。")
-        print("这是正常的：先用 WorkBuddy 正常对话几天，再来构建即可。")
+        print("尚未发现任何客户端的对话转录。")
+        print("已检查：" + "、".join(f"{a} {r}" for a, r in adapters.DEFAULT_ROOTS))
+        print('可补来源： "sources": [{"agent": "generic", "root": "~/my-agent/history"}]')
         return 0
+    say("来源：" + "、".join(f"{s_['agent']}×{len(s_['files'])}" for s_ in sources))
 
     state = load_json(STATE, {})
     prev = state.get("sessions", {})
@@ -913,15 +960,18 @@ def cmd_build(args) -> int:
 
     sessions: dict[str, dict] = {}
     changed: list[str] = []
+    keys: dict[Path, str] = {}
     for p in files:
         try:
             st = p.stat()
         except OSError:
             continue
+        key = f"{adapters.agent_of(p)}:{p.stem}"
+        keys[p] = key
         fp = [st.st_mtime_ns // 10**6, st.st_size]
-        new_state[p.stem] = fp
-        if prev.get(p.stem) != fp:
-            changed.append(p.stem)
+        new_state[key] = fp
+        if prev.get(key) != fp:
+            changed.append(key)
 
     if not args.force and not changed:
         say("无新增或变更会话，跳过构建。")
@@ -931,25 +981,55 @@ def cmd_build(args) -> int:
     # 避免每次都重新读一遍几百 MB 磁盘。聚类仍基于全部会话，索引不会残缺。
     pcache = load_json(CACHE, {})
 
+    def _put(sess: dict) -> None:
+        """同一会话可能同时出现在 rollout 文件和 SQLite 里，留内容更全的那份。
+
+        标题另有讲究：SQLite 的标题来自客户端目录（真实标题），rollout 只能用
+        首条提问兜底。所以保留更全消息的同时，优先采用「客户端给的标题」。
+        """
+        old = sessions.get(sess["id"])
+        if old:
+            keep_old = old.get("msgs", 0) > sess.get("msgs", 0)
+            big, small = (old, sess) if keep_old else (sess, old)
+            if small.get("title_src") and not big.get("title_src"):
+                big["title"] = small["title"]
+                big["title_src"] = "agent"
+            if not big.get("cwd") and small.get("cwd"):
+                big["cwd"] = small["cwd"]
+            if keep_old:
+                return
+        sessions[sess["id"]] = sess
+
     reused = 0
     for p in files:
-        fp = new_state.get(p.stem)
-        hit = pcache.get(p.stem)
-        if not args.force and hit and hit.get("_fp") == fp:
-            s = {k: v for k, v in hit.items() if k != "_fp"}
-            s["asst"] = []
-            reused += 1
-        else:
-            s = parse_session(p)
-            if not s:
+        key = keys.get(p)
+        fp = new_state.get(key) if key else None
+        unchanged = (not args.force) and key is not None and prev.get(key) == fp
+
+        if unchanged:
+            # 来源没变：直接按来源标签从缓存恢复，不重读磁盘
+            restored = 0
+            for entry in pcache.values():
+                if not isinstance(entry, dict) or entry.get("_src") != key:
+                    continue
+                s = {k: v for k, v in entry.items() if k != "_fp"}
+                s["asst"] = []
+                _put(s)
+                restored += 1
+            if restored:
+                reused += restored
                 continue
+
+        for s in parse_sessions(p):
             s["_concl"] = conclusions(s)
             s["_prod"] = products(s)
             # 读原文的代价：raw 快照包含用户请求全文 + 结论摘录
             s["_raw_chars"] = (sum(len(x) for x in s["prompts"])
                                + sum(len(x) for x in s["_concl"]) + 200)
+            s["_key"] = key
+            s["_src"] = key
             s.pop("asst", None)
-        sessions[s["id"]] = s
+            _put(s)
 
     # ---- 抽词：标题为主（权重 3），用户请求为辅（权重 1），助手正文不进词表
     def session_terms(s: dict) -> tuple[Counter, Counter]:
@@ -987,7 +1067,7 @@ def cmd_build(args) -> int:
         s["_ent"] = [t for t, _ in terms[:8]]
 
     # ---- 收集凭证值（必须在渲染之前，供两遍脱敏的第二遍使用）
-    _SECRETS.clear()
+    secrets_clear()
     for s_ in sessions.values():
         collect_secrets("\n".join(s_["prompts"]))
         collect_secrets("\n".join(s_["_concl"]))
@@ -1003,15 +1083,30 @@ def cmd_build(args) -> int:
         (d / f"{sid}.md").write_text(redact(render_raw(s)), encoding="utf-8")
 
     # ---- 落盘：wiki
+    # macOS/Windows 的文件系统默认不区分大小写，`WORKBUDDY.md` 与 `WorkBuddy.md`
+    # 会落成同一个文件——28 个主题悄悄变成 27 个。slug 必须按小写去重。
+    used_slugs: set[str] = set()
+
+    def _unique_slug(title: str) -> str:
+        base = slugify(title) or "untitled"
+        cand = base
+        i = 2
+        while cand.lower() in used_slugs:
+            cand = f"{base}-{i}"
+            i += 1
+        used_slugs.add(cand.lower())
+        return cand
+
     pages: list[dict] = []
     for g in groups:
         kw = {g["anchor"]: [t for t, _ in per[g["sessions"][0]]]}
         body = render_page(g, sessions, kw)
-        slug = slugify(g["anchor"])
+        slug = _unique_slug(g["anchor"])
         (WIKI / f"{slug}.md").write_text(redact_page(body), encoding="utf-8")
         pages.append({
             "title": g["anchor"], "slug": slug, "n": len(g["sessions"]),
             "recent": max(sessions[s]["end"] for s in g["sessions"]),
+            "tokens": est_tokens(body),
         })
 
     # 未归类会话按月归档，避免出现一个吞掉四成语料的巨型「零散」页
@@ -1020,10 +1115,18 @@ def cmd_build(args) -> int:
         by_month[ymd(sessions[sid]["end"])[:7]].append(sid)
     for month, sids in sorted(by_month.items()):
         sub = {s: sessions[s] for s in sids}
-        slug = f"{month}-会话档案"
-        (WIKI / f"{slug}.md").write_text(redact_page(render_month(month, sub)), encoding="utf-8")
+        slug = _unique_slug(f"{month}-会话档案")
+        mbody = render_month(month, sub)
+        (WIKI / f"{slug}.md").write_text(redact_page(mbody), encoding="utf-8")
         pages.append({"title": f"{month} 会话档案", "slug": slug, "n": len(sids),
-                      "recent": max(sessions[s]["end"] for s in sids)})
+                      "recent": max(sessions[s]["end"] for s in sids),
+                      "tokens": est_tokens(mbody)})
+
+    # ---- 启动自检（写进 _系统/gate.json，技能每次先读它）
+    gate = compute_gate(sessions, pages)
+    save_json(GATEFILE, gate)
+    if gate["status"] == "dormant":
+        say(f"[休眠] {gate['reason']}。此时不检索、不读页，只继续积累语料。")
 
     # ---- keywords.json
     kwmap: dict[str, list[str]] = defaultdict(list)
@@ -1050,8 +1153,17 @@ def cmd_build(args) -> int:
         else:
             say(f"[!] 保留非生成页：{old.name}（手写内容请移到主库 wiki/）")
 
+    # 旧版本会写 _系统/index.json，里面存着未脱敏的历史条目；
+    # 现已由 keywords.json + index.md 取代，必须清掉，否则脱敏永远有漏网。
+    legacy = SYS / "index.json"
+    if legacy.exists():
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+
     # ---- index / state / log
-    INDEX.write_text(render_index(pages, len(new_state)), encoding="utf-8")
+    INDEX.write_text(render_index(pages, len(sessions), gate), encoding="utf-8")
     save_json(STATE, {"sessions": new_state})
     new_pcache = {}
     for sid, s in sessions.items():
@@ -1066,12 +1178,14 @@ def cmd_build(args) -> int:
         if entry.get("_prod"):
             entry["_prod"] = [[a, redact(b)] for a, b in entry["_prod"]]
         entry["_raw_chars"] = entry.get("_raw_chars", 0)
-        entry["_fp"] = new_state.get(sid)
+        entry["_src"] = entry.get("_src") or entry.get("_key")
+        entry["_fp"] = new_state.get(entry.get("_key") or sid)
         new_pcache[sid] = entry
     save_json(CACHE, new_pcache)
     if changed:
         append_log([f"- {time.strftime('%Y-%m-%d %H:%M')}｜build｜解析 {len(sessions)} 个会话"
-                    f"（变更 {len(changed)}），生成 {len(pages)} 个主题页｜源 {WB_HOME / 'projects'}"])
+                    f"（变更 {len(changed)}），生成 {len(pages)} 个主题页"
+                    f"｜源 " + "、".join(f"{s_['agent']}×{len(s_['files'])}" for s_ in sources)])
 
     dt = time.time() - t0
     say(f"构建完成：{len(sessions)} 个会话（缓存命中 {reused}，需重解析 {len(sessions) - reused}）"
@@ -1088,8 +1202,8 @@ def cmd_build(args) -> int:
 # ------------------------------------------------------------------ 报告 / 校验
 
 def cmd_report(args) -> int:
-    state = load_json(STATE, {})
-    n_sess = len(state.get("sessions", {}))
+    gate0 = load_json(GATEFILE, {})
+    n_sess = gate0.get("sessions") or len(load_json(STATE, {}).get("sessions", {}))
     pages = sorted(WIKI.glob("*.md"))
     kw = load_json(KWFILE, {"terms": {}})
 
@@ -1105,8 +1219,10 @@ def cmd_report(args) -> int:
     bad_yaml = [r for r in rows if not r[0]]
     no_log = [r[0] for r in rows if not r[3]]
 
+    gate = load_json(GATEFILE, {})
     lines = [
         f"对话库构建报告 {time.strftime('%Y-%m-%d %H:%M')}",
+        f"自检 {gate.get('status', 'unknown')}｜{gate.get('reason', '')}",
         f"会话总数 {n_sess}｜主题页 {len(pages)}｜关键词 {len(kw.get('terms', {}))}",
         f"薄页面(<300字) {len(thin)}｜缺更新日志 {len(no_log)}",
     ]
@@ -1117,18 +1233,26 @@ def cmd_report(args) -> int:
     return 0
 
 
+_LEAK_RES = [
+    re.compile(r"\bsk-[A-Za-z0-9._\-]{8,}"),
+    re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_\-]{20,})\b"),
+    # 引号必须成对，且值不能是 ***（已脱敏）或空
+    re.compile(r"(?i)(?:pass(?:word|wd)?|api[_-]?key|secret)\s*[:=]\s*([\"'`]?)(?!\*)([^\s\"'`]{4,})\1"),
+    re.compile(r"(?:密码|口令|密钥)\s*[:：=]\s*(?!\*)([A-Za-z0-9!@#$%^&*._\-]{4,})"),
+    re.compile(r"(?<!\d)1[3-9]\d{6}\d{4}(?!\d)"),
+]
+
+
 def cmd_lint(args) -> int:
     # 先扫 raw/：快照虽不可变，但必须确认脱敏生效（凭据一旦落盘就是事故）
     leaks = 0
     for f in RAW.rglob("*.md"):
         t = f.read_text(encoding="utf-8", errors="replace")
-        for pat in (r"(?i)(?:pass(?:word|wd)?|api[_-]?key|secret)\s*[:=]\s*[^\s*]",
-                    r"(?:密码|口令|密钥)\s*[:：=]?\s*[A-Za-z0-9!@#$%^&*]{4,}",
-                    r"(?<!\d)1[3-9]\d{6}\d{4}(?!\d)"):
-            if re.search(pat, t):
-                print(f"[!] 凭据未脱敏：{f.name}")
-                leaks += 1
-                break
+        # 三条都要「真的像值」才算泄漏。早期版本把 `KEY=` 后面紧跟的反引号/引号
+        # 当成值，于是 DB_PASS=`、TOKEN_PLAN_API_KEY=" 全部误报——狼来了比漏报更伤。
+        if any(pat.search(t) for pat in _LEAK_RES):
+            print(f"[!] 凭据未脱敏：{f.name}")
+            leaks += 1
     if leaks:
         print(f"\n[!] {leaks} 个 raw 快照含明文凭据，禁止提交或同步。")
         return 2
@@ -1157,7 +1281,7 @@ def cmd_lint(args) -> int:
         for bad in ("TODO", "待补充", "待填写"):
             if bad in vis:
                 probs.append(f"占位符 {bad}")
-        if re.search(r"(?i)(password|passwd|api[_-]?key)\s*[:=]\s*\S{6,}", vis):
+        if any(pat.search(vis) for pat in _LEAK_RES):
             probs.append("疑似明文凭据")
         if probs:
             errs += 1
@@ -1170,7 +1294,11 @@ def cmd_stats(args) -> int:
     state = load_json(STATE, {})
     kw = load_json(KWFILE, {"terms": {}})
     pages = sorted(WIKI.glob("*.md"))
-    print(f"已沉淀会话：{len(state.get('sessions', {}))}")
+    gate = load_json(GATEFILE, {})
+    print(f"自检状态：{gate.get('status', 'unknown')}（{gate.get('reason', '')}）")
+    print(f"压缩比：{gate.get('compression', 0)}:1｜典型会话 {gate.get('median_session_tokens', 0)} token"
+          f"｜典型页 {gate.get('median_page_tokens', 0)} token")
+    print(f"已沉淀会话：{gate.get('sessions') or len(state.get('sessions', {}))}")
     print(f"主题页：{len(pages)}")
     print(f"关键词：{len(kw.get('terms', {}))}")
     top = sorted(kw.get("terms", {}).items(), key=lambda x: -len(x[1]))[:12]

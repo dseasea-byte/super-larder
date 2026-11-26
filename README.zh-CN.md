@@ -1,19 +1,16 @@
 # Super Larder · 温故
 
-**核心是省 Token：它是档案，不是记忆。**
+**它是档案，不是记忆。**
 
 larder 是英文里「把已经付过钱的东西存起来、冬天不必再买」的地方。
 
 [English](README.md) · 中文
 
-> 把历史对话在本地压成一份可查档案，让 AI 下次不必重读原文。**不调用大模型、不需要显卡、不上传一个字节；建库 0 token，重复阅读省 84–94%。**
+> 把历史对话在本地整理成可检索的知识库。**不调用任何大模型，不需要显卡，不上传一个字节。**
 
 **只读一次，之后随时可查。**
 
 [English](#english) · [工作原理](#工作原理) · [安装](#安装三步) · [局限](#它做不到什么)
-
-
-![Super Larder 工作原理](assets/showcase.jpg)
 
 ---
 
@@ -49,34 +46,91 @@ larder 是英文里「把已经付过钱的东西存起来、冬天不必再买�
 
 ---
 
+## 支持哪些客户端
+
+**不用配置，装完自动发现、自动识别格式。**
+
+| 客户端 | 读取位置 | 适配 |
+|---|---|---|
+| Codex（CLI / Desktop） | `~/.codex/sessions/**/rollout-*.jsonl` | 原生 |
+| Codex Desktop 实时线程 | `~/.codex/thread_history_1.sqlite` | 原生 |
+| Claude Code | `~/.claude/projects/<slug>/<uuid>.jsonl` | 原生 |
+| Gemini CLI | `~/.gemini/tmp/<proj>/chats/*.json` | 原生 |
+| Qwen Code / iFlow CLI | `~/.qwen/tmp`、`~/.iflow/tmp` | 原生 |
+| WorkBuddy / CodeBuddy | `~/.workbuddy|~/.codebuddy/projects/<proj>/<sid>.jsonl` | 原生 |
+| GitHub Copilot Chat（VS Code / Cursor / Windsurf / Trae / Kiro） | `.../workspaceStorage/*/chatSessions/*.json` | 原生 |
+| Cline / Roo Code | `.../globalStorage/saoudrizwan.claude-dev/tasks/*/api_conversation_history.json` | 原生 |
+| Continue | `~/.continue/sessions/*.json` | 原生 |
+| OpenCode | `~/.local/share/opencode/storage/message/<sid>/*.json` | 原生 |
+| ChatGPT 导出包 | `conversations.json` | 原生 |
+| aider | `.aider.chat.history.md` | 原生 |
+| 其他任何 Agent | JSONL / JSON 带 `role` + `content` | 通用兜底 |
+
+先看本机到底认出了什么，不花一个 token：
+
+```bash
+python3 scripts/adapters.py
+```
+
+自研客户端在 `config.json` 里指个路就行：
+
+```json
+{ "sources": [{ "agent": "generic", "root": "~/my-agent/history" }] }
+```
+
+换 Agent 不用重建：一个库同时吃多家转录，每页都标注每个会话来自哪个客户端。
+
+---
+
+## 它会自己判断该不该开工
+
+这是大多数工具省掉的一步。
+
+装完时、以及每次重建后，它都会算三个数：
+
+| 指标 | 含义 |
+|---|---|
+| 会话数 | 见过多少段对话 |
+| 压缩比 | 原始 token ÷ 档案 token |
+| 回本比 | 典型会话 token ÷ 典型页 token |
+
+**如果读一页比读被替代的原始会话还贵，它就休眠**：不检索、不读页、不打扰，只在后台继续积累语料；等到某次重建跨过阈值，自己切换成启用。
+
+本机实测：8 个会话时压缩比 1.0:1、回本比 0.12 → 休眠；227 个会话时 56:1、回本比 1.21 → 启用。
+
+---
+
 ## 实测数据
 
-在一台普通台式机上，101 个历史会话、15,459 条消息、627 MB 原始转录：
+在一台普通 Mac 上，227 个历史会话、约 224 万 token 原始转录：
 
 | 指标 | 数值 |
 |---|---|
-| 冷启动建库 | **2.9 秒** |
-| 增量刷新 | **0.8 秒** |
-| 产出 | 22 个主题页 / 39,946 tokens |
-| 压缩比 | **73 : 1**（293 万 → 4 万 tokens） |
+| 冷启动建库 | **2.0 秒** |
+| 增量刷新 | **0.3–1.4 秒** |
+| 产出 | 28 个主题页 / 39,691 token |
+| 压缩比 | **56.6 : 1**（224 万 → 4 万 token） |
+| 典型会话 | 1,547 token |
+| 典型页 | 1,266 token |
 | 建库消耗 token | **0** |
-| 单次检索 | **17 ms** |
+| 单次检索定位 | **17 毫秒** |
 
-**核心价值是省 token。** 平均一页 1,815 tokens，用它替代重读原文：
+读一次的成本对照（典型页 1,266 token）：
 
-| 场景 | 不用 | 用 | 省 |
+| 场景 | 不用技能 | 用技能 | 节省 |
 |---|---|---|---|
-| 回顾一个主题（中位 2 个会话） | 11,390 | 1,815 | **84%** |
-| 回顾一个大会话 | 29,610 | 1,815 | **94%** |
-| 只读命中行 | 11,390 | 241 | **98%** |
+| 替代 2 个中位会话 | 3,094 | 1,266 | **59%** |
+| 替代 1 个大会话 | 29,610 | 1,266 | **96%** |
+| 只读命中行 | 3,094 | 241 | **92%** |
 
-> 若按「读完全部语料」计算是 98.6%——没人会那么做。对外引用 84–94% 更稳妥。
+> 省多少取决于被替代的会话有多长——所以它才要装完先自检，不划算就休眠。
+> 对外只说 59–96%，不说「省 98%」。
 
 ---
 
 ## 工作原理
 
-1. **扫描** `~/.workbuddy/projects/**/*.jsonl`（WorkBuddy 的会话转录）
+1. **扫描** 各家客户端的转录目录（Codex / Claude Code / Gemini / Qwen / WorkBuddy / Copilot / Cline / Continue / OpenCode …，路径见上表）
 2. **清洗**：剥掉 system-reminder、task-notification 等注入块及其残留样板句
 3. **抽词**：用 jieba 词性标注，只留名词性词语；**标题权重 3、用户请求权重 1，助手正文不进词表**（工具输出噪音全在正文里）
 4. **脱敏**：口令、密钥、手机号的值替换为 `***`
@@ -159,7 +213,7 @@ read_hint: page         # page 读整页 / either 看命中段 / grep 别读整�
 
 实测分布（101 个会话）：12 页 `page`、8 页 `either`、2 页 `grep`。
 
-**小语料往往是反的**：9 个短会话只生成 3 页，全部是 `grep`——读它们净亏。
+**小语料往往是反的**：9 个短会话时，读页 1,112 tokens，而直接读两个相关会话只要 486——越读越贵。
 判断标准只有一条：**你的单次对话有多长**。三五轮就结束的对话，建库不划算。
 
 ## 它做不到什么
@@ -170,8 +224,8 @@ read_hint: page         # page 读整页 / either 看命中段 / grep 别读整�
 - **不提升判断力。** 它给线索，不给结论。
 - **关键词检索，不是语义检索。** 同义表述可能漏（「命名规则」查不到「页名规范」）。
 - **主题名会漂移。** 每次全量重聚类，新会话可能让旧主题页合并或改名。
-- **只处理 WorkBuddy 的转录格式。** 其他客户端需要改 `parse_session()`。
-- **省 token 是有限的。** 稳态约 8%，单次回顾省 84–94%。想靠它把账单砍一半，做不到。
+- **内置 12 种转录格式，长尾格式不保证。** 只要记录里带 `role` + `content`，通用适配器都能读；但把历史加密或切碎到私有数据库里的客户端，仍需单独写适配。
+- **省 token 是有限的。** 单次回顾省 59–96%，取决于被替代的会话有多长。想靠它把账单砍一半，做不到。
 
 ---
 
@@ -207,7 +261,7 @@ python scripts/recall.py show <会话ID>
 
 Every new chat starts amnesiac. You re-explain the same context, re-derive the same plan, re-hit the same pitfalls. Online models are billed per token, so "just re-read the history" is expensive and often impossible.
 
-This tool pushes the mechanical work to your own CPU: cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, and building an inverted index. On a 101-session / 627 MB corpus it runs in **2.9 seconds and costs zero tokens**, compressing 2.93M tokens of raw dialogue into 40K tokens of searchable pages (73:1). The point is saving tokens: **84–94% fewer tokens on every revisit**.
+This tool pushes the mechanical work to your own CPU: cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, and building an inverted index. On a 99-session / 627 MB corpus it runs in **2.6 seconds and costs zero tokens**, compressing 2.9M tokens of raw dialogue into 39K tokens of searchable pages (75:1).
 
 Design rules: **no model dependency** (Python + jieba only, so anyone can install it), **extractive with provenance** (every conclusion carries a date and session id, never paraphrased), and **redaction before write** (passwords, keys and phone numbers are masked to `***`).
 
