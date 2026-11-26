@@ -4,6 +4,8 @@
 
 A *larder* is where you keep what you've already paid for, so winter costs nothing.
 
+> **0 tokens to build · 14–91% fewer tokens per revisit · 12 client formats · pure CPU**
+
 [中文](README.zh-CN.md) · English
 
 Turns your past conversations into a local, searchable archive — **without calling a single LLM, without a GPU, without uploading a byte.**

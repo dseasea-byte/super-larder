@@ -4,14 +4,16 @@ slug: super-larder
 version: 5.2.0
 displayName: Super Larder · 接续
 display_name_en: Super Larder
-description: 把历史对话在本地整理成可查档案，让 AI 下次不必重读原料。整理与检索全由本机脚本完成，不调用模型、不耗 token；支持 Codex、Claude Code、Gemini、WorkBuddy 等 12 种客户端。装完先自检，语料不够或读页不划算就休眠。当用户在新会话重提旧任务、要求「沿用上次/接着之前/查一下以前」、或需要回溯已定口径与踩坑记录时使用。
-description_en: Turns past conversations into a locally searchable archive so the assistant stops re-reading raw transcripts. Extraction and retrieval run in local scripts: zero model calls, zero tokens. Twelve client formats built in. Self-checks after install and stays dormant until it actually pays off. Use when a session revisits prior work, or when earlier decisions and pitfalls must be recalled.
+description: 把历史对话在本机压成可查档案：建库 0 token，单次回溯净省 14–91% token。整理与检索全由本机脚本完成，不调用模型；支持 Codex、Claude Code、Gemini、WorkBuddy 等 12 种客户端。装完先自检，语料不够或读页不划算就休眠。当用户在新会话重提旧任务、要求「沿用上次/接着之前/查一下以前」、或需要回溯已定口径与踩坑记录时使用。
+description_en: Compresses past conversations into a local, searchable archive: zero tokens to build, 14-91% fewer tokens net per revisit. Extraction and retrieval run in local scripts with no model calls. Twelve client formats built in. Self-checks after install and stays dormant until it actually pays off. Use when a session revisits prior work, or when earlier decisions and pitfalls must be recalled.
 author: "董海洋（DHY.sea）"
 ---
 
 # Super Larder · 接续
 
-历史对话 → 本地可查档案。**Read once. Answer forever.** 建库与检索全在本机跑，0 token；
+历史对话 → 本地可查档案。**Read once. Answer forever.**
+
+**建库 0 token，单次回溯净省 14–91% token。** 整理、抽词、聚类、检索全部在本机跑；
 只依赖 Python 3.9+ 与 jieba（`pip install jieba`），不要显卡、不要 API key。
 细节都在 `references/`，**用到再读**。
 
