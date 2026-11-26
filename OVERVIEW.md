@@ -8,7 +8,7 @@ Super Larder 换个思路：把搬运的活交给你的 CPU。
 
 - 聊过的每一句，在本机压成一份可查档案
 - 建库 **0 token**、约 **2 秒**，不联网、不调模型
-- 读一次省 **59–96%**（取决于被替代的会话多长），只读命中行约 **92%**
+- 读一次**净省 14–91%**（已扣掉技能正文那 1,400 token；取决于被替代的会话多长），只读命中行净省 **47%**
 - 原句照录，带日期和会话 ID，随时回原文核对
 - **装完先自检**：语料太小、读页不划算时自动休眠，不检索、不打扰，够了自己醒
 
@@ -37,8 +37,8 @@ Super Larder moves the mechanical work to your own CPU:
 
 - Turns everything you've said into a local, searchable archive
 - **Zero tokens** to build, about **2 seconds**, no network, no model calls
-- **59–96% fewer tokens** per revisit, depending on the size of the sessions replaced;
-  about **92%** when only the hit line is read
+- **14–91% fewer tokens net** per revisit, after charging the ~1,400 tokens of instructions
+  the skill itself loads; about **47%** net when only the hit line is read
 - Extractive with provenance: original sentences, dates and session IDs, always traceable
 - **Self-checks before it runs**: if the corpus is too small to pay off, it stays dormant —
   no lookups, no interruption — and wakes up on its own once it is

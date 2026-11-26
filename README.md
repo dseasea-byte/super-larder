@@ -111,17 +111,18 @@ An 8-session corpus measured here: compression 1.0:1, payoff 0.12 → dormant. A
 | Tokens spent building | **0** |
 | Retrieval lookup | **17 ms** |
 
-Cost of reading (median page: 1,266 tokens):
+Cost of reading (median page: 1,266 tokens). "Net" also charges the ~1,400 tokens of
+instructions the skill itself loads — that is the number your bill actually sees:
 
-| Task | Without | With | Saved |
-|---|---|---|---|
-| Revisit one topic (2 median sessions) | 3,094 | 1,266 | **59%** |
-| Revisit one large session | 29,610 | 1,266 | **96%** |
-| Read matched lines only | 3,094 | 241 | **92%** |
+| Task | Without | Page only | Net (page + 1,400) | Net saved |
+|---|---|---|---|---|
+| Revisit one topic (2 median sessions) | 3,094 | 1,266 | 2,666 | **14%** |
+| Revisit one large session | 29,610 | 1,266 | 2,666 | **91%** |
+| Read matched lines only | 3,094 | 241 | 1,641 | **47%** |
+| Three lookups in one session | 9,282 | 3,798 | 5,198 | **44%** |
 
-> These are measured on a 227-session corpus, not projections. The saving depends entirely on
-> how big the sessions being replaced are — which is exactly why the skill self-checks before
-> it runs. Quote 59–96% per revisit, never a flat "98%". 
+> Measured on a 227-session corpus, not projections. Instructions load once per session, so
+> repeated lookups amortize them. Quote the net range (14–91%), never a flat "98%". 
 
 ---
 
@@ -220,7 +221,7 @@ On a small corpus it inverts: 9 short sessions gave 3 pages, all `grep` — read
 - **Keyword retrieval, not semantic.** Synonyms can be missed.
 - **Topic names drift.** Every build re-clusters the whole corpus, so new sessions can merge or rename pages.
 - **Twelve transcript formats ship in the box; the long tail does not.** Anything with `role` + `content` is read by the generic adapter — but a client that encrypts or shards its history needs its own adapter.
-- **Savings are bounded.** 59–96% per revisit, depending on how long the replaced sessions were. It won't halve your bill.
+- **Savings are bounded.** 14–91% net per revisit, depending on how long the replaced sessions were. It won't halve your bill.
 
 ---
 

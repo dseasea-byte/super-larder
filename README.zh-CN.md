@@ -115,16 +115,17 @@ python3 scripts/adapters.py
 | 建库消耗 token | **0** |
 | 单次检索定位 | **17 毫秒** |
 
-读一次的成本对照（典型页 1,266 token）：
+读一次的成本对照（典型页 1,266 token）。「净」把技能正文自己那约 1,400 token 也算进去——
+那才是账单上的数：
 
-| 场景 | 不用技能 | 用技能 | 节省 |
-|---|---|---|---|
-| 替代 2 个中位会话 | 3,094 | 1,266 | **59%** |
-| 替代 1 个大会话 | 29,610 | 1,266 | **96%** |
-| 只读命中行 | 3,094 | 241 | **92%** |
+| 场景 | 不用技能 | 只算页 | 净（页 + 1,400） | **净省** |
+|---|---|---|---|---|
+| 替代 2 个中位会话 | 3,094 | 1,266 | 2,666 | **14%** |
+| 替代 1 个大会话 | 29,610 | 1,266 | 2,666 | **91%** |
+| 只读命中行 | 3,094 | 241 | 1,641 | **47%** |
+| 同一会话回溯 3 次 | 9,282 | 3,798 | 5,198 | **44%** |
 
-> 省多少取决于被替代的会话有多长——所以它才要装完先自检，不划算就休眠。
-> 对外只说 59–96%，不说「省 98%」。
+> 说明成本每会话只付一次，回顾越多越划算。对外只说净省区间 14–91%，不说「省 98%」。
 
 ---
 
@@ -225,7 +226,7 @@ read_hint: page         # page 读整页 / either 看命中段 / grep 别读整�
 - **关键词检索，不是语义检索。** 同义表述可能漏（「命名规则」查不到「页名规范」）。
 - **主题名会漂移。** 每次全量重聚类，新会话可能让旧主题页合并或改名。
 - **内置 12 种转录格式，长尾格式不保证。** 只要记录里带 `role` + `content`，通用适配器都能读；但把历史加密或切碎到私有数据库里的客户端，仍需单独写适配。
-- **省 token 是有限的。** 单次回顾省 59–96%，取决于被替代的会话有多长。想靠它把账单砍一半，做不到。
+- **省 token 是有限的。** 单次回顾净省 14–91%，取决于被替代的会话有多长。想靠它把账单砍一半，做不到。
 
 ---
 
@@ -261,7 +262,7 @@ python scripts/recall.py show <会话ID>
 
 Every new chat starts amnesiac. You re-explain the same context, re-derive the same plan, re-hit the same pitfalls. Online models are billed per token, so "just re-read the history" is expensive and often impossible.
 
-This tool pushes the mechanical work to your own CPU: cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, and building an inverted index. On a 99-session / 627 MB corpus it runs in **2.6 seconds and costs zero tokens**, compressing 2.9M tokens of raw dialogue into 39K tokens of searchable pages (75:1).
+This tool pushes the mechanical work to your own CPU: cleaning transcripts, extracting keywords with jieba POS tagging, clustering sessions into topic pages, and building an inverted index. On a 227-session / 2.24M-token corpus it runs in **2.0 seconds and costs zero tokens**, compressing the raw dialogue into 39,691 tokens of searchable pages (56.6:1).
 
 Design rules: **no model dependency** (Python + jieba only, so anyone can install it), **extractive with provenance** (every conclusion carries a date and session id, never paraphrased), and **redaction before write** (passwords, keys and phone numbers are masked to `***`).
 

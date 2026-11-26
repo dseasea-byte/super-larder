@@ -847,7 +847,8 @@ def render_index(pages: list[dict], total_sessions: int, gate: dict | None = Non
          f"｜主题页：{len(pages)}",
          f"> 自检状态：**{flag}**｜{gate.get('reason', '')}",
          f"> 压缩比 {gate.get('compression', 0)}:1｜典型会话 {gate.get('median_session_tokens', 0)} token"
-         f"｜典型页 {gate.get('median_page_tokens', 0)} token", "",
+         f"｜典型页 {gate.get('median_page_tokens', 0)} token"
+         f"｜回本比 {gate.get('payoff', 0)}（已含说明成本 {gate.get('overhead_tokens', 0)} token）", "",
          "## 主题页", "",
          "| 主题 | 会话数 | 最近活跃 | 文件 |",
          "|---|---|---|---|"]
@@ -905,6 +906,13 @@ def compute_gate(sessions: dict, pages: list[dict]) -> dict:
     min_sessions = int(cfg.get("min_sessions", 20))
     min_compression = float(cfg.get("min_compression", 8))
     min_payoff = float(cfg.get("min_payoff", 1.0))
+    # 技能正文本身的加载成本。不装技能就不用读这几千字，装了就每会话都要读，
+    # 所以「省下的」必须扣掉它，否则中等会话会变成净亏。
+    overhead = int(cfg.get("overhead_tokens", 1400))
+
+    # 回本比：一次典型回溯（替代两个中位会话）÷（读一页 + 读这份说明）
+    page_payoff = (med_sess / med_page) if med_page else 0.0
+    payoff = (2 * med_sess / (med_page + overhead)) if (med_page or overhead) else 0.0
 
     reasons = []
     if len(sess_tokens) < min_sessions:
@@ -912,7 +920,9 @@ def compute_gate(sessions: dict, pages: list[dict]) -> dict:
     if compression < min_compression:
         reasons.append(f"压缩比 {compression:.1f}:1，至少需要 {min_compression:.0f}:1")
     if payoff < min_payoff:
-        reasons.append(f"典型会话 {med_sess} token，不足一页（{med_page} token）")
+        reasons.append(
+            f"典型会话 {med_sess} token，替代两次（{med_sess * 2}）也抵不过"
+            f"一页（{med_page}）+ 说明（{overhead}）")
     return {
         "status": "dormant" if reasons else "active",
         "checked_at": time.strftime("%Y-%m-%d %H:%M"),
@@ -924,8 +934,10 @@ def compute_gate(sessions: dict, pages: list[dict]) -> dict:
         "median_page_tokens": med_page,
         "compression": round(compression, 2),
         "payoff": round(payoff, 2),
+        "page_payoff": round(page_payoff, 2),
+        "overhead_tokens": overhead,
         "thresholds": {"min_sessions": min_sessions, "min_compression": min_compression,
-                       "min_payoff": min_payoff},
+                       "min_payoff": min_payoff, "overhead_tokens": overhead},
         "reason": "；".join(reasons) if reasons else "三个条件均满足，可启用",
     }
 
@@ -1224,6 +1236,8 @@ def cmd_report(args) -> int:
         f"对话库构建报告 {time.strftime('%Y-%m-%d %H:%M')}",
         f"自检 {gate.get('status', 'unknown')}｜{gate.get('reason', '')}",
         f"会话总数 {n_sess}｜主题页 {len(pages)}｜关键词 {len(kw.get('terms', {}))}",
+        f"回本比 {gate.get('payoff', 0)}｜典型会话 {gate.get('median_session_tokens', 0)}"
+        f" ÷ (典型页 {gate.get('median_page_tokens', 0)} + 说明 {gate.get('overhead_tokens', 0)})",
         f"薄页面(<300字) {len(thin)}｜缺更新日志 {len(no_log)}",
     ]
     if thin:
@@ -1298,6 +1312,7 @@ def cmd_stats(args) -> int:
     print(f"自检状态：{gate.get('status', 'unknown')}（{gate.get('reason', '')}）")
     print(f"压缩比：{gate.get('compression', 0)}:1｜典型会话 {gate.get('median_session_tokens', 0)} token"
           f"｜典型页 {gate.get('median_page_tokens', 0)} token")
+    print(f"回本比：{gate.get('payoff', 0)} = 2×典型会话 ÷ (典型页 + 说明 {gate.get('overhead_tokens', 0)})")
     print(f"已沉淀会话：{gate.get('sessions') or len(state.get('sessions', {}))}")
     print(f"主题页：{len(pages)}")
     print(f"关键词：{len(kw.get('terms', {}))}")
