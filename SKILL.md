@@ -1,7 +1,7 @@
 ---
 name: super-larder
 slug: super-larder
-version: 5.2.0
+version: 5.2.2
 displayName: Super Larder · 接续
 display_name_en: Super Larder
 description: 把历史对话在本机压成可查档案：建库 0 token，单次回溯净省 14–91% token。整理与检索全由本机脚本完成，不调用模型；支持 Codex、Claude Code、Gemini、WorkBuddy 等 12 种客户端。装完先自检，语料不够或读页不划算就休眠。当用户在新会话重提旧任务、要求「沿用上次/接着之前/查一下以前」、或需要回溯已定口径与踩坑记录时使用。
